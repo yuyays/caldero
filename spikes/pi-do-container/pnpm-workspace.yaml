@@ -1,0 +1,5 @@
+packages: []
+allowBuilds:
+  workerd: true
+  protobufjs: false
+  "@google/genai": false

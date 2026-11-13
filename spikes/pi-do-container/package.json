@@ -1,0 +1,26 @@
+{
+  "name": "spike-pi-do-container",
+  "private": true,
+  "type": "module",
+  "description": "PROTOTYPE, throwaway: Pi Durable inside an Alchemy Durable Object with a Container sandbox",
+  "packageManager": "pnpm@11.28.6",
+  "dependencies": {
+    "@alchemy.run/cloudflare": "2.0.0-beta.87",
+    "@earendil-works/chord": "1.5.2",
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-durable": "1.5.2",
+    "@earendil-works/pi-env": "1.5.2",
+    "@effect/platform-node": "4.1.4",
+    "alchemy": "2.0.0-beta.87",
+    "effect": "4.1.4"
+  },
+  "scripts": {
+    "dev": "alchemy dev",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261112.1",
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}
