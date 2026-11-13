@@ -1,0 +1,32 @@
+{
+  "name": "@puchero/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch --watch-preserve-output src/main.ts",
+    "build": "effect-tsgo tsc --noEmit && vp pack",
+    "start": "node --enable-source-maps dist/main.js",
+    "typecheck": "effect-tsgo tsc --noEmit",
+    "test": "vp test run --passWithNoTests",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/sql-pg": "catalog:",
+    "drizzle-orm": "1.0.0-rc.5",
+    "effect": "catalog:",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@puchero/contracts": "workspace:*",
+    "@types/node": "^26.6.6",
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "1.0.0-rc.5",
+    "esbuild": "0.28.2",
+    "vite-plus": "catalog:"
+  }
+}

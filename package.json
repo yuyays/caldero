@@ -1,0 +1,38 @@
+{
+  "name": "puchero",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "vp run --filter \"@puchero/*\" --parallel dev",
+    "dev:web": "vp run --filter @puchero/web dev",
+    "dev:api": "vp run --filter @puchero/api dev",
+    "build": "vp run --filter \"@puchero/*\" build",
+    "start:api": "vp run @puchero/api#start",
+    "typecheck": "vp run --cache --concurrency-limit 4 --filter \"@puchero/*\" typecheck",
+    "test": "vp run --filter \"@puchero/*\" test && effect-tsgo patch --oxlint && node --test tools/effect-policy.test.js",
+    "test:browser": "vp run --filter \"@puchero/*\" test:browser",
+    "browser:install": "vp run --filter \"@puchero/*\" browser:install",
+    "lint": "effect-tsgo patch --oxlint && vp lint .",
+    "format:check": "vp fmt . --check",
+    "prepare": "effect-tsgo patch --typescript --oxlint",
+    "db:generate": "vp run @puchero/api#db:generate",
+    "db:migrate": "vp run @puchero/api#db:migrate",
+    "db:studio": "vp run @puchero/api#db:studio"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.67.5",
+    "@oxlint/plugins": "1.92.0",
+    "typescript": "7.0.2",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": ">=24.11.0"
+  },
+  "packageManager": "pnpm@11.28.6"
+}

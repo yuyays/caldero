@@ -1,0 +1,21 @@
+{
+  "name": "@puchero/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./http": "./src/http/index.ts",
+    "./schemas/user": "./src/schemas/user.ts"
+  },
+  "scripts": {
+    "typecheck": "effect-tsgo tsc --noEmit",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "vite-plus": "catalog:"
+  }
+}
