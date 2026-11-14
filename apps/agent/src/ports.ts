@@ -4,7 +4,12 @@ import { Context, type Effect, Schema } from "effect";
 
 /** A failure's message, for errors that cross into a typed error or a stored outcome. */
 export const errorMessage = (error: unknown) =>
-  error instanceof Error ? error.message : String(error);
+  typeof error === "object" &&
+  error !== null &&
+  "message" in error &&
+  typeof error.message === "string"
+    ? error.message
+    : String(error);
 
 /** One changed file of a patch. Content is base64 so binary files survive JSON. */
 export const FileChange = Schema.Union([
@@ -45,6 +50,34 @@ export class WorkspaceError extends Schema.TaggedError<WorkspaceError>()("Worksp
   message: Schema.String,
 }) {}
 
+export const Checkpoint = Schema.Struct({ number: Schema.Int, digest: Schema.String });
+export type Checkpoint = typeof Checkpoint.Type;
+
+/** Pi owns this journal; the workspace owns detecting and repairing a changed boot. */
+export interface WorkspaceRecovery {
+  readonly read: (signal: AbortSignal) => Promise<{
+    readonly repo: Repo;
+    readonly baseSha: string;
+    readonly bootId: string | null;
+    readonly checkpoint: Checkpoint | null;
+  }>;
+  /** Atomically record the boot and admit the restoration steer, when present. */
+  readonly restored: (
+    bootId: string,
+    notice: string | undefined,
+    signal: AbortSignal,
+  ) => Promise<void>;
+}
+
+/** Immutable blobs outside the sandbox, namespaced to one session. */
+export class WorkspaceStore extends Context.Service<
+  WorkspaceStore,
+  {
+    readonly put: (key: string, value: string) => Effect.Effect<void, WorkspaceError>;
+    readonly get: (key: string) => Effect.Effect<string, WorkspaceError>;
+  }
+>()("puchero/WorkspaceStore") {}
+
 /**
  * The agent's sandbox for one session. Every method is idempotent: a task that crashed after calling it calls it again.
  */
@@ -52,7 +85,9 @@ export class Workspace extends Context.Service<
   Workspace,
   {
     /** The environment Pi's coding tools run in. */
-    readonly env: () => ExecutionEnv;
+    readonly env: (recovery?: WorkspaceRecovery) => ExecutionEnv;
+    /** Upload a complete change set before the caller commits its pointer. */
+    readonly checkpoint: (number: number) => Effect.Effect<Checkpoint, WorkspaceError>;
     /** Make the workspace hold `repo` at `baseSha`; does nothing once it does. */
     readonly prepare: (repo: Repo, baseSha: string) => Effect.Effect<void, WorkspaceError>;
     /** Freeze the current change set, run the checks against the frozen copy, and keep the patch. */
