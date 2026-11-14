@@ -42,6 +42,8 @@ const setup = Effect.fn("setup")(function* (
     readonly onWrite?: () => void;
     /** Runs when a validation starts. */
     readonly onValidate?: () => void;
+    /** Every validation dies with this defect instead of running. */
+    readonly validationDefect?: Error;
   } = {},
 ) {
   const root = yield* Effect.promise(() => mkdtemp(join(tmpdir(), "puchero-")));
@@ -73,7 +75,8 @@ const setup = Effect.fn("setup")(function* (
         });
         const validate = () => {
           options.onValidate?.();
-          return local.validate();
+          const defect = options.validationDefect;
+          return defect === undefined ? local.validate() : Effect.die(defect);
         };
         return Workspace.of({ ...process.gate({ ...local, validate }), env: () => watched });
       }),
@@ -227,6 +230,18 @@ describe("SessionHost", () => {
       const { state } = yield* host.view();
       expect(state).toMatchObject({ status: "failed", runId: 3, attempts: 3 });
       expect(state.failure).toContain("2 tests failed");
+    }),
+  );
+
+  it.effect("fails the session visibly when validation breaks unexpectedly", () =>
+    Effect.gen(function* () {
+      const { host } = yield* setup({ validationDefect: new Error("disk vanished") });
+      yield* host.deliver(labeled, "delivery-1");
+      yield* host.drain();
+
+      const { state } = yield* host.view();
+      expect(state).toMatchObject({ status: "failed", attempts: 3 });
+      expect(state.failure).toContain("disk vanished");
     }),
   );
 

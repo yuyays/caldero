@@ -201,6 +201,42 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
       Submit: () => Effect.succeed(undefined),
     });
 
+  /**
+   * Pi skips `afterRun` when a run fails or is aborted, so a failed run is found from `pi.live` instead: its failure
+   * names the run's inputs, and each input's request names the session run it belongs to. Reports it as `RunFailed`
+   * in `tx`, at most once per failure; true when that changed the session.
+   */
+  const reportFailedRun = async (tx: Tx, now: number) => {
+    const live = await tx.doc(LiveDoc, root());
+    const failure = live.runFailure;
+    if (failure === undefined || live.run !== undefined) return false;
+    const doc = await tx.doc(SessionDoc);
+    let runId: number | undefined;
+    for (const id of failure.inputs) {
+      const requestId = (await tx.submission(id))?.requestId;
+      const requestRun = requestId === undefined ? undefined : doc.runs[requestId];
+      if (requestRun !== undefined) runId = Math.max(runId ?? 0, requestRun);
+    }
+    if (runId === undefined) return false;
+    const reason =
+      failure.detail === undefined ? failure.reason : `${failure.reason}: ${failure.detail}`;
+    const event = Events.RunFailed.make({ runId, reason });
+    return (await applyEvent(tx, event, `run-failed:${failure.taskId}`, now)) === "applied";
+  };
+
+  /** What an event-bearing instruction reports when its action failed unexpectedly, so the session never waits on it. */
+  const fallback = (instruction: Instruction, message: string): SessionEvent | undefined =>
+    Instruction.match(instruction, {
+      Validate: ({ runId }) => Events.ValidationFailed.make({ runId, evidence: message }),
+      // It may have landed: reconcile, never repeat.
+      Publish: () => Events.PublishFailed.make({ kind: "ambiguous", message }),
+      Reconcile: () => Events.PublishFailed.make({ kind: "ambiguous", message }),
+      Comment: () => undefined,
+      Project: () => undefined,
+      AbortRun: () => undefined,
+      Submit: () => undefined,
+    });
+
   /** Runs one instruction, then commits its outcome; a crash before that commit runs it again. */
   const Instructions = defineTask<Instruction, { phase: "run"; attempt: number }, null>({
     name: "puchero.instruction",
@@ -239,6 +275,8 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
             }
           }
           await runtime.commit(async (tx) => {
+            // A failed run not reported yet would otherwise be hidden by this input starting a new one.
+            await reportFailedRun(tx, runtime.now());
             const doc = await tx.doc(SessionDoc);
             const current = decodeState(doc.state);
             if (current.status !== "running" || current.runId !== instruction.runId) {
@@ -275,8 +313,11 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
         }
 
         const outcome = await run(Effect.exit(perform(instruction, await readState())));
-        if (Exit.isFailure(outcome)) {
-          // Only comments and projections fail here. Nothing in the session waits for them, so they retry alone.
+        const failed = Exit.isFailure(outcome)
+          ? fallback(instruction, errorMessage(Cause.squash(outcome.cause)))
+          : undefined;
+        if (Exit.isFailure(outcome) && failed === undefined) {
+          // A comment or projection. Nothing in the session waits for it, so it retries alone.
           const attempt = task.state.checkpoint.attempt + 1;
           if (attempt < sideEffectAttempts) {
             await runtime.sleepUntil(
@@ -293,9 +334,9 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
           );
           return;
         }
+        const event = Exit.isSuccess(outcome) ? outcome.value : failed;
         await runtime.commit(async (tx) => {
-          if (outcome.value !== undefined)
-            await applyEvent(tx, outcome.value, eventId, runtime.now());
+          if (event !== undefined) await applyEvent(tx, event, eventId, runtime.now());
           return done;
         }, context);
       },
@@ -401,36 +442,9 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
     }, context),
   );
 
-  /**
-   * Pi skips `afterRun` when a run fails or is aborted, so a failed run is found here instead: `pi.live` names the
-   * failed run's inputs, and the inputs name their run. Runs at open and after every change of `pi.live`.
-   */
   const syncRun = async () => {
-    const live = await harness.snapshot(LiveDoc, root(), context);
-    const failure = live?.runFailure;
-    if (failure === undefined || live?.run !== undefined) return;
-    const doc = await harness.snapshot(SessionDoc, context);
-    let runId: number | undefined;
-    for (const id of failure.inputs) {
-      const submission = await (await harness.submission(id, context))?.status(context);
-      const requestRun =
-        submission?.requestId === undefined ? undefined : doc?.runs[submission.requestId];
-      if (requestRun !== undefined) runId = Math.max(runId ?? 0, requestRun);
-    }
-    if (runId === undefined) return;
-    const reason =
-      failure.detail === undefined ? failure.reason : `${failure.reason}: ${failure.detail}`;
     const now = await run(Clock.currentTimeMillis);
-    await harness.commit(
-      (tx) =>
-        applyEvent(
-          tx,
-          Events.RunFailed.make({ runId, reason }),
-          `run-failed:${failure.taskId}`,
-          now,
-        ),
-      context,
-    );
+    await harness.commit((tx) => reportFailedRun(tx, now), context);
   };
   let syncing = Promise.resolve();
   /** Runs `syncRun` after the previous one. A failure is logged; the next change, resume, or open runs it again. */

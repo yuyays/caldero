@@ -227,10 +227,13 @@ from its storage and ports, then opening the next. Changes from the design above
   admission commit re-checks the run: an obsolete start is dropped, and a steer that missed its run is decided again
   as `UserInput`. No instruction is admitted inside `deliver`'s commit.
 - **Run end.** `afterRun` asks for a `RunAnswered` task, which waits while puchero input is queued behind the run.
-  A failed run is found from `pi.live.runFailure` (its inputs map to their run) at open, on `resume`, and on every
-  `pi.live` change. Because a failed run may leave no task to wake the object, the DO shell must keep a heartbeat
+  A failed run is found from `pi.live.runFailure` (its inputs map to their run) and reported in a commit: at open,
+  on `resume`, on every `pi.live` change, and inside every input admission, so new input cannot hide it. Because a failed run may leave no task to wake the object, the DO shell must keep a heartbeat
   alarm while the session is `running` or `validating`.
-- **Comments and projections** retry on their own with durable backoff (five attempts); no session event waits on them.
+- **Unexpected failures** of `Validate`, `Publish` and `Reconcile` become their failure events (a publish as
+  `ambiguous`), so the reducer's attempt limits apply. Comments and projections retry on their own with durable
+  backoff (five attempts); no session event waits on them. A task Pi faults after repeated crashes still reports no
+  event; handle that with the DO shell's `onReport` in step 3.
 - **`Workspace.validate()` takes no commands**: the checks are adapter configuration. Validations run one at a time,
   a stale `Validate` is skipped, and `patch(digest)` re-verifies the digest. `GitWorkspace` implements the seam over
   any Pi `ExecutionEnv`, so `ContainerWorkspace` reuses it.
