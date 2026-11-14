@@ -9,13 +9,13 @@ tools in a Cloudflare Container, and recover on its own after crashes, long turn
 
 **Answer: yes, locally** (`alchemy dev`, workerd + Docker). Deployed CPU limits are still unproven.
 
-| Check | Result |
-|---|---|
-| Pi on Durable Object SQLite | Passed; a repeated `requestId` returned the same submission |
-| Tools in the Container | Passed; pi-env's connection ported to run its daemon through `container.exec` |
-| Crash mid-tool | Passed; Pi recorded the call as interrupted, the model continued, the run finished |
-| Long turn (90 s tool) | Passed locally with 30 s alarm heartbeats; CPU limits need a deploy |
-| Container reset detectable | Passed; boot marker changed and files were gone; notifying the model is not built |
+| Check                       | Result                                                                             |
+| --------------------------- | ---------------------------------------------------------------------------------- |
+| Pi on Durable Object SQLite | Passed; a repeated `requestId` returned the same submission                        |
+| Tools in the Container      | Passed; pi-env's connection ported to run its daemon through `container.exec`      |
+| Crash mid-tool              | Passed; Pi recorded the call as interrupted, the model continued, the run finished |
+| Long turn (90 s tool)       | Passed locally with 30 s alarm heartbeats; CPU limits need a deploy                |
+| Container reset detectable  | Passed; boot marker changed and files were gone; notifying the model is not built  |
 
 Decisions carried into the design:
 

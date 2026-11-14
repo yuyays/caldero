@@ -17,16 +17,16 @@ Coding threads reuse Linux sandboxes. Unlike the announcement's automatic recrea
 
 Puchero entries describe the supplied proposal, not verified implementation.
 
-| Layer | Open SWE / current Robin | Puchero |
-|---|---|---|
-| Hosting | Python backend, LangGraph/MDA; PostgreSQL/Redis [1] | Effect v4 TypeScript; Cloudflare/Alchemy v2; `alchemy dev` with workerd/Docker; no PostgreSQL |
-| Intake | Slack, Linear, GitHub channels; logged deliveries [2] | Worker signature verification, delivery dedupe, durable admission; inbox API/React SPA; Slack later |
-| Thread/run | Runtime checkpoints; PostgreSQL thread index [3] | SessionDO SQLite state machine; persisted alarm wakeups; serialized steering/follow-ups |
-| Harness | Deep Agents plus deterministic loop middleware [4] | Pi Durable in DO; ExecutionEnv delegates tools to Container |
-| Workspace | Persistent thread sandbox; explicit recovery boundary [5] | One secret-free Container/session; R2 checkpoint after mutations; restore notification |
-| Publication | Backend PR tool; requester OAuth or system App token [6] | Digest-bound approval; App-token publication; reconciliation; DO outbox/D1 projections |
-| Verification | Tooling and CI/review follow-ups [7] | Sandbox typecheck/tests; CI creates runs; Alchemy PR previews later |
-| Identity/policy | Registered users, shared-trust deployment; scoped personal integrations [8] | CredentialDO per-owner model access; later D1 identities, SchedulerDO, policy and visibility |
+| Layer           | Open SWE / current Robin                                                    | Puchero                                                                                             |
+| --------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Hosting         | Python backend, LangGraph/MDA; PostgreSQL/Redis [1]                         | Effect v4 TypeScript; Cloudflare/Alchemy v2; `alchemy dev` with workerd/Docker; no PostgreSQL       |
+| Intake          | Slack, Linear, GitHub channels; logged deliveries [2]                       | Worker signature verification, delivery dedupe, durable admission; inbox API/React SPA; Slack later |
+| Thread/run      | Runtime checkpoints; PostgreSQL thread index [3]                            | SessionDO SQLite state machine; persisted alarm wakeups; serialized steering/follow-ups             |
+| Harness         | Deep Agents plus deterministic loop middleware [4]                          | Pi Durable in DO; ExecutionEnv delegates tools to Container                                         |
+| Workspace       | Persistent thread sandbox; explicit recovery boundary [5]                   | One secret-free Container/session; R2 checkpoint after mutations; restore notification              |
+| Publication     | Backend PR tool; requester OAuth or system App token [6]                    | Digest-bound approval; App-token publication; reconciliation; DO outbox/D1 projections              |
+| Verification    | Tooling and CI/review follow-ups [7]                                        | Sandbox typecheck/tests; CI creates runs; Alchemy PR previews later                                 |
+| Identity/policy | Registered users, shared-trust deployment; scoped personal integrations [8] | CredentialDO per-owner model access; later D1 identities, SchedulerDO, policy and visibility        |
 
 Sources: [1][install]; [2][channel]; [3][store]; [4][loop]; [5][sandbox]; [6][pr]; [7][github]; [8][custom].
 
@@ -65,5 +65,4 @@ Sources: [1][install]; [2][channel]; [3][store]; [4][loop]; [5][sandbox]; [6][pr
 [github]: https://github.com/langchain-ai/open-swe/blob/444ab3bf577d6b9c61f8becb4145cae411b202f1/openswe/github/webhook.py
 [custom]: https://github.com/langchain-ai/open-swe/blob/444ab3bf577d6b9c61f8becb4145cae411b202f1/docs/CUSTOMIZATION.md
 [patch]: https://github.com/langchain-ai/open-swe/blob/444ab3bf577d6b9c61f8becb4145cae411b202f1/openswe/sandbox_scripts/recovery_patch.py
-
 [readme]: https://github.com/langchain-ai/open-swe/blob/444ab3bf577d6b9c61f8becb4145cae411b202f1/README.md
