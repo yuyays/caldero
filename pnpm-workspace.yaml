@@ -20,6 +20,9 @@ allowBuilds:
   "@parcel/watcher": true
   esbuild: true
   msgpackr-extract: true
+  # Pulled in by pi-ai; their install scripts are not needed.
+  "@google/genai": false
+  protobufjs: false
 overrides:
   "vite@*": "catalog:"
   "vitest@*": 5.1.0

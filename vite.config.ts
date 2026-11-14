@@ -86,7 +86,7 @@ export default defineConfig({
     },
     overrides: [
       {
-        files: ["apps/api/src/**/*.ts", "apps/web/src/**"],
+        files: ["apps/api/src/**/*.ts", "apps/agent/src/**/*.ts", "apps/web/src/**"],
         rules: { "starter/runtime-boundary": "error" },
       },
       {
@@ -94,6 +94,8 @@ export default defineConfig({
         files: [
           "apps/api/src/main.ts",
           "apps/api/src/http.ts",
+          // Pi Durable calls the session host's tasks as Promises.
+          "apps/agent/src/session-host.ts",
           "apps/web/src/lib/api-client.ts",
           "apps/web/src/lib/users.ts",
           ...testFiles,
