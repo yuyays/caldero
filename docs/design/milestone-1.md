@@ -217,6 +217,27 @@ Against `alchemy dev` with `LocalWorkspace` or the container, `FakeGitHub`, and 
 4. `GitHubApp` publisher with the stage journal: criteria 10, 13, 15.
 5. Inbox UI, then the deployed check (16).
 
+### Step 2 as built
+
+`SessionDO`'s logic is the `SessionHost` deep module in `apps/agent/src/session-host.ts`, tested in Node against
+Pi's `MemoryStorage`, `LocalWorkspace`, `FakeGitHub` and faux models; crashes are simulated by cutting one host off
+from its storage and ports, then opening the next. Changes from the design above:
+
+- **`Submit` runs as a task too.** A start prepares the workspace first (a failure becomes `RunFailed`), and the
+  admission commit re-checks the run: an obsolete start is dropped, and a steer that missed its run is decided again
+  as `UserInput`. No instruction is admitted inside `deliver`'s commit.
+- **Run end.** `afterRun` asks for a `RunAnswered` task, which waits while puchero input is queued behind the run.
+  A failed run is found from `pi.live.runFailure` (its inputs map to their run) at open, on `resume`, and on every
+  `pi.live` change. Because a failed run may leave no task to wake the object, the DO shell must keep a heartbeat
+  alarm while the session is `running` or `validating`.
+- **Comments and projections** retry on their own with durable backoff (five attempts); no session event waits on them.
+- **`Workspace.validate()` takes no commands**: the checks are adapter configuration. Validations run one at a time,
+  a stale `Validate` is skipped, and `patch(digest)` re-verifies the digest. `GitWorkspace` implements the seam over
+  any Pi `ExecutionEnv`, so `ContainerWorkspace` reuses it.
+- **`GitHub.fetchSource`** (files) stands in for `fetchTarball` until the container needs chunked transfer.
+- **Moved to step 3:** the Alchemy DO shell (with the heartbeat above), criterion 9 (checkpoints), patches in R2
+  (they live on the workspace disk until then), and forwarding cancellation into Pi calls.
+
 ## Open questions
 
 - Validation dependencies: are baked caches enough for typical repos, or do we need an egress allowlist?
