@@ -57,6 +57,8 @@ export const SessionState = Schema.Struct({
   queued: Schema.Array(Schema.String),
   pullRequest: Schema.NullOr(Schema.Struct({ number: Schema.Int, url: Schema.String })),
   failure: Schema.NullOr(Schema.String),
+  /** Who approved, rejected or cancelled, for the audit trail. */
+  decidedBy: Schema.NullOr(Schema.String),
   updatedAt: Schema.Finite,
 });
 export type SessionState = typeof SessionState.Type;
@@ -78,8 +80,8 @@ export const SessionEvent = Schema.TaggedUnion({
   },
 });
 export type SessionEvent = typeof SessionEvent.Type;
-/** Event constructors, e.g. `Event.UserInput.make({ text })`. */
-export const Event = SessionEvent.cases;
+/** Event constructors, e.g. `Events.UserInput.make({ text })`. */
+export const Events = SessionEvent.cases;
 
 /** An external action, committed before it runs. `instructionId` is unique and stable. */
 export const Instruction = Schema.TaggedUnion({
@@ -110,8 +112,8 @@ const sameBinding = (a: ApprovalBinding, b: ApprovalBinding) =>
 /** `applied` changed the session; `duplicate` repeats what already happened; `stale` was refused. */
 export type DecisionResult = "applied" | "duplicate" | "stale";
 
-/** Consecutive failed runs or validations before the session fails. */
-export const attemptLimit = 3;
+/** Consecutive failures of one phase (run and validation, or publishing) before the session fails. */
+const attemptLimit = 3;
 
 export interface Decision {
   readonly state: SessionState;
@@ -137,6 +139,7 @@ export const initialSession = (init: {
     queued: [],
     pullRequest: null,
     failure: null,
+    decidedBy: null,
     updatedAt: 0,
   });
 
@@ -167,6 +170,26 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
   const submit =
     (runId: number, mode: "start" | "steer", text: string) => (instructionId: string) =>
       Instruction.cases.Submit.make({ instructionId, runId, mode, text });
+
+  const isCurrentRun = (runId: number, ...statuses: ReadonlyArray<Status>) =>
+    runId === state.runId && statuses.includes(state.status);
+  /** The current candidate's binding, when `binding` names exactly that candidate. */
+  const matchesCandidate = (binding: ApprovalBinding) => {
+    const current = state.candidate?.binding;
+    return current !== undefined && sameBinding(current, binding);
+  };
+  /** Settles a publish; input held meanwhile starts the next run. */
+  const settle = (
+    change: Partial<SessionState>,
+    instructions: ReadonlyArray<(id: string) => Instruction> = [],
+  ): Decision => {
+    if (state.queued.length === 0) return applied(change, instructions);
+    const runId = state.runId + 1;
+    return applied(
+      { ...change, status: "running", runId, attempts: 0, candidate: null, queued: [] },
+      [...instructions, submit(runId, "start", state.queued.join("\n\n"))],
+    );
+  };
 
   /** Starts the next run after a failure, or fails the session once the attempts are used up. */
   const retry = (text: string, failure: string): Decision => {
@@ -201,14 +224,13 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
       }
     },
     RunAnswered: ({ runId }) => {
-      if (state.status !== "running" || runId !== state.runId) return unchanged("stale");
+      if (!isCurrentRun(runId, "running")) return unchanged("stale");
       return applied({ status: "validating" }, [
         (instructionId) => Instruction.cases.Validate.make({ instructionId, runId }),
       ]);
     },
     Validated: ({ runId, patchDigest, evidence }) => {
-      if (state.status !== "validating" || runId !== state.runId || state.baseSha === null)
-        return unchanged("stale");
+      if (!isCurrentRun(runId, "validating") || state.baseSha === null) return unchanged("stale");
       const version = state.version + 1;
       const binding = {
         sessionId: state.sessionId,
@@ -226,48 +248,45 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
       });
     },
     ValidationFailed: ({ runId, evidence }) => {
-      if (state.status !== "validating" || runId !== state.runId) return unchanged("stale");
+      if (!isCurrentRun(runId, "validating")) return unchanged("stale");
       return retry(
         `Validation failed. Fix the failures and finish again.\n\n${evidence}`,
         `Validation failed: ${evidence}`,
       );
     },
     RunFailed: ({ runId, reason }) => {
-      if ((state.status !== "running" && state.status !== "validating") || runId !== state.runId)
-        return unchanged("stale");
+      if (!isCurrentRun(runId, "running", "validating")) return unchanged("stale");
       return retry(
         `The previous attempt failed (${reason}). Continue the task.`,
         `Run failed: ${reason}`,
       );
     },
-    Approve: ({ binding }) => {
-      const current = state.candidate?.binding;
-      if (current === undefined || !sameBinding(current, binding)) return unchanged("stale");
+    Approve: ({ actor, binding }) => {
+      if (!matchesCandidate(binding)) return unchanged("stale");
       if (state.status === "publishing" || state.status === "published")
         return unchanged("duplicate");
       if (state.status !== "awaitingApproval") return unchanged("stale");
-      return applied({ status: "publishing", attempts: 0 }, [
+      return applied({ status: "publishing", attempts: 0, decidedBy: actor }, [
         (instructionId) => Instruction.cases.Publish.make({ instructionId, binding }),
       ]);
     },
-    Reject: ({ binding }) => {
-      const current = state.candidate?.binding;
-      if (current === undefined || !sameBinding(current, binding)) return unchanged("stale");
+    Reject: ({ actor, binding }) => {
+      if (!matchesCandidate(binding)) return unchanged("stale");
       if (state.status === "rejected") return unchanged("duplicate");
       if (state.status !== "awaitingApproval") return unchanged("stale");
-      return applied({ status: "rejected" });
+      return applied({ status: "rejected", decidedBy: actor });
     },
-    Cancel: () => {
+    Cancel: ({ actor }) => {
       switch (state.status) {
         case "running":
         case "validating":
-          return applied({ status: "cancelled" }, [
+          return applied({ status: "cancelled", decidedBy: actor }, [
             (instructionId) =>
               Instruction.cases.AbortRun.make({ instructionId, runId: state.runId }),
           ]);
         case "idle":
         case "awaitingApproval":
-          return applied({ status: "cancelled" });
+          return applied({ status: "cancelled", decidedBy: actor });
         case "cancelled":
           return unchanged("duplicate");
         default:
@@ -278,7 +297,7 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
     PublishSucceeded: ({ number, url }) => {
       if (state.status === "published") return unchanged("duplicate");
       if (state.status !== "publishing") return unchanged("stale");
-      return applied({ status: "published", pullRequest: { number, url } }, [
+      return settle({ status: "published", pullRequest: { number, url } }, [
         (instructionId) =>
           Instruction.cases.Comment.make({
             instructionId,
@@ -290,16 +309,12 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
     PublishFailed: ({ kind, message }) => {
       const binding = state.candidate?.binding;
       if (state.status !== "publishing" || binding === undefined) return unchanged("stale");
-      if (kind === "ambiguous")
-        return applied({}, [
-          (instructionId) => Instruction.cases.Reconcile.make({ instructionId, binding }),
-        ]);
       const attempts = state.attempts + 1;
       if (kind === "permanent" || attempts >= attemptLimit)
-        return applied({ status: "failed", attempts, failure: `Publish failed: ${message}` });
-      return applied({ attempts }, [
-        (instructionId) => Instruction.cases.Publish.make({ instructionId, binding }),
-      ]);
+        return settle({ status: "failed", attempts, failure: `Publish failed: ${message}` });
+      // An unknown outcome is reconciled, never republished: the first attempt may have landed.
+      const next = kind === "ambiguous" ? Instruction.cases.Reconcile : Instruction.cases.Publish;
+      return applied({ attempts }, [(instructionId) => next.make({ instructionId, binding })]);
     },
   });
 };

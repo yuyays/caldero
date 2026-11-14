@@ -50,19 +50,22 @@ decide(state: SessionState, event: SessionEvent, now: Instant): { state: Session
 - **States:** `idle → running → validating → awaitingApproval → publishing → published`, plus `rejected`,
   `cancelled`, `failed`. `version` increments with every proposed candidate; `runId` identifies each Pi run.
 - **Rules it owns:**
-  - Policy per repo + label: `off | observe` (milestone 1).
+  - Policy `off | observe` (milestone 1), resolved by `SessionDO` for the repo and label when the session is
+    created; the reducer enforces it.
   - **Approval binding** `(sessionId, version, runId, repo, baseSha, patchDigest)`. A mismatch, a repeat of a
     decided approval, or any state but `awaitingApproval` is rejected as stale; a duplicate of the winning approval
     is a no-op.
   - **Results are bound to their run:** `Validated` for anything but the current `runId` is ignored, so queued input
     can never make an old result approvable.
   - **Input while `running` steers; while `validating` or `awaitingApproval` it invalidates the candidate** and
-    starts a new run (`version + 1` on its proposal); **while `publishing` it queues** until the publish settles.
+    starts a new run (`version + 1` on its proposal); **while `publishing` it queues** until the publish settles, then starts the next run.
   - `PublishFailed("ambiguous")` yields `Reconcile`, never `Publish`.
-  - Attempt limits for runs, validation, and publishing; exhaustion yields `failed` with a reason.
+  - Attempt limits per phase (run and validation share one counter; publishing and reconciling share another);
+    exhaustion yields `failed` with a reason.
+  - Records who approved, rejected or cancelled (`decidedBy`) for the audit trail.
 
 Policy, approval and queuing rules interact, so they stay in one module. **Test surface:** table-driven tests of
-`decide`, in-process. Time comes from Effect's `Clock` (`TestClock` in tests); no clock seam.
+`decide`, in-process. `now` is epoch milliseconds from Effect's `Clock` (`TestClock` in tests); no clock seam.
 
 ### 2. `SessionDO`: `apps/agent` (Alchemy Effect Durable Object)
 
@@ -177,17 +180,33 @@ Against `alchemy dev` with `LocalWorkspace` or the container, `FakeGitHub`, and 
    gets exactly one linking comment.
 4. A patch with a binary file, a deletion, and a mode change round-trips into the PR unchanged.
 
-**Approval and input** 5. A stale binding, a repeated decided approval, and approval outside `awaitingApproval` change nothing; a
-duplicate of the winning approval is a no-op. 6. Input during `validating` or `awaitingApproval` invalidates the candidate; the next proposal is `version + 1`, and
-the old run's late `Validated` is ignored. 7. Validation failure and run abort each produce a visible state (`running` retry or `failed`), never a stuck one.
+**Approval and input**
 
-**Crashes** (DO aborted at each point; the session recovers with no further request) 8. Between `deliver`'s commit and the webhook acknowledgement: the redelivery is deduplicated. 9. After a checkpoint upload but before its pointer commit, and after the pointer commit but before the tool result. 10. After each publish stage, and after the PR is created but before its receipt commits: exactly one PR exists. 11. Mid-tool: the transcript records the interruption and the run continues. 12. Container destroyed mid-run: the workspace is restored from the latest checkpoint and the model gets the notice.
+5. A stale binding, a repeated decided approval, and approval outside `awaitingApproval` change nothing; a
+   duplicate of the winning approval is a no-op.
+6. Input during `validating` or `awaitingApproval` invalidates the candidate; the next proposal is `version + 1`,
+   and the old run's late `Validated` is ignored.
+7. Validation failure and run abort each produce a visible state (`running` retry or `failed`), never a stuck one.
 
-**Publishing edge cases** 13. A pre-existing branch at a different commit fails as a visible branch conflict, not a second PR. 14. Cancel during `running` stops the run and its commands; cancel during `publishing` is refused.
+**Crashes** (DO aborted at each point; the session recovers with no further request)
 
-**Deployed (manual)** 15. **One real GitHub contract check**: publish against a scratch repo with the GitHub App. 16. **Deployed to Cloudflare** with `ContainerWorkspace` and a real model: a redeploy mid-run resumes it, and a run
-with CPU-heavy work in the DO (large transcripts, compaction) stays within the Workers CPU limit. A sleeping
-tool proves elapsed time only, not CPU budget.
+8. Between `deliver`'s commit and the webhook acknowledgement: the redelivery is deduplicated.
+9. After a checkpoint upload but before its pointer commit, and after the pointer commit but before the tool result.
+10. After each publish stage, and after the PR is created but before its receipt commits: exactly one PR exists.
+11. Mid-tool: the transcript records the interruption and the run continues.
+12. Container destroyed mid-run: the workspace is restored from the latest checkpoint and the model gets the notice.
+
+**Publishing edge cases**
+
+13. A pre-existing branch at a different commit fails as a visible branch conflict, not a second PR.
+14. Cancel during `running` stops the run and its commands; cancel during `publishing` is refused.
+
+**Deployed (manual)**
+
+15. **One real GitHub contract check**: publish against a scratch repo with the GitHub App.
+16. **Deployed to Cloudflare** with `ContainerWorkspace` and a real model: a redeploy mid-run resumes it, and a run
+    with CPU-heavy work in the DO (large transcripts, compaction) stays within the Workers CPU limit. A sleeping
+    tool proves elapsed time only, not CPU budget.
 
 ## Build order
 

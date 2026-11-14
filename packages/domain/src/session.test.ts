@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { decide, type Decision, Event, initialSession, type SessionEvent } from "./session.ts";
+import { decide, type Decision, Events, initialSession, type SessionEvent } from "./session.ts";
 
 const now = 1_800_000_000_000;
 const repo = { owner: "acme", name: "shop" };
@@ -12,10 +12,10 @@ const run = (events: ReadonlyArray<SessionEvent>, start = fresh()) => {
   for (const event of events) decision = decide(decision.state, event, now);
   return decision;
 };
-const labeled = Event.IssueLabeled.make({ context: "Fix the login bug", baseSha: "base1" });
-const answered = (runId: number) => Event.RunAnswered.make({ runId });
+const labeled = Events.IssueLabeled.make({ context: "Fix the login bug", baseSha: "base1" });
+const answered = (runId: number) => Events.RunAnswered.make({ runId });
 const validated = (runId: number, patchDigest: string) =>
-  Event.Validated.make({ runId, patchDigest, evidence: "typecheck ok, 12 tests passed" });
+  Events.Validated.make({ runId, patchDigest, evidence: "typecheck ok, 12 tests passed" });
 /** The binding a reviewer sees for the first proposal. */
 const firstBinding = {
   sessionId: "github:acme/shop#7",
@@ -26,17 +26,17 @@ const firstBinding = {
   patchDigest: "sha256:aaa",
 };
 const proposed = [labeled, answered(1), validated(1, "sha256:aaa")];
-const cancel = Event.Cancel.make({ actor: "yuyays" });
+const cancel = Events.Cancel.make({ actor: "yuyays" });
 const publishFailed = (kind: "retryable" | "permanent" | "ambiguous") =>
-  Event.PublishFailed.make({ kind, message: `${kind} failure` });
-const input = (text: string) => Event.UserInput.make({ text });
-const approve = (binding = firstBinding) => Event.Approve.make({ actor: "yuyays", binding });
+  Events.PublishFailed.make({ kind, message: `${kind} failure` });
+const input = (text: string) => Events.UserInput.make({ text });
+const approve = (binding = firstBinding) => Events.Approve.make({ actor: "yuyays", binding });
 
 describe("decide", () => {
   it("starts run 1 with the issue context when an observed issue is labeled", () => {
     const { state, instructions, result } = decide(
       fresh(),
-      Event.IssueLabeled.make({ context: "Fix the login bug", baseSha: "base1" }),
+      Events.IssueLabeled.make({ context: "Fix the login bug", baseSha: "base1" }),
       now,
     );
     expect(result).toBe("applied");
@@ -54,12 +54,12 @@ describe("decide", () => {
   });
 
   it("validates a run once it answers, and ignores answers from other runs", () => {
-    const validating = run([labeled, Event.RunAnswered.make({ runId: 1 })]);
+    const validating = run([labeled, Events.RunAnswered.make({ runId: 1 })]);
     expect(validating.state.status).toBe("validating");
     expect(validating.instructions).toMatchObject([{ _tag: "Validate" }, { _tag: "Project" }]);
     expect(validating.instructions[0]).toMatchObject({ runId: 1 });
 
-    const other = run([labeled, Event.RunAnswered.make({ runId: 9 })]);
+    const other = run([labeled, Events.RunAnswered.make({ runId: 9 })]);
     expect(other.result).toBe("stale");
     expect(other.state.status).toBe("running");
   });
@@ -99,7 +99,7 @@ describe("decide", () => {
     expect(run([labeled, approve()]).result).toBe("stale");
     const rejected = run([
       ...proposed,
-      Event.Reject.make({ actor: "yuyays", binding: firstBinding }),
+      Events.Reject.make({ actor: "yuyays", binding: firstBinding }),
     ]);
     expect(rejected.state.status).toBe("rejected");
     expect(decide(rejected.state, approve(), now).result).toBe("stale");
@@ -153,7 +153,7 @@ describe("decide", () => {
     const failedOnce = run([
       labeled,
       answered(1),
-      Event.ValidationFailed.make({ runId: 1, evidence: "2 tests failed" }),
+      Events.ValidationFailed.make({ runId: 1, evidence: "2 tests failed" }),
     ]);
     expect(failedOnce.state.status).toBe("running");
     expect(failedOnce.state.runId).toBe(2);
@@ -167,8 +167,8 @@ describe("decide", () => {
   it("fails the session with a reason after three failed attempts in a row", () => {
     const attempt = (runId: number, failure: "validation" | "run") =>
       failure === "validation"
-        ? [answered(runId), Event.ValidationFailed.make({ runId, evidence: "tests failed" })]
-        : [Event.RunFailed.make({ runId, reason: "model error" })];
+        ? [answered(runId), Events.ValidationFailed.make({ runId, evidence: "tests failed" })]
+        : [Events.RunFailed.make({ runId, reason: "model error" })];
     const { state, instructions } = run([
       labeled,
       ...attempt(1, "validation"),
@@ -181,7 +181,7 @@ describe("decide", () => {
   });
 
   it("ignores failures reported for a run that is no longer current", () => {
-    const { result, state } = run([labeled, Event.RunFailed.make({ runId: 7, reason: "late" })]);
+    const { result, state } = run([labeled, Events.RunFailed.make({ runId: 7, reason: "late" })]);
     expect(result).toBe("stale");
     expect(state.status).toBe("running");
   });
@@ -207,7 +207,7 @@ describe("decide", () => {
 
   it("records the pull request and comments on the issue once publishing succeeds", () => {
     const pr = { number: 42, url: "https://github.com/acme/shop/pull/42" };
-    const { state, instructions } = run([...proposed, approve(), Event.PublishSucceeded.make(pr)]);
+    const { state, instructions } = run([...proposed, approve(), Events.PublishSucceeded.make(pr)]);
     expect(state.status).toBe("published");
     expect(state.pullRequest).toEqual(pr);
     expect(instructions[0]).toMatchObject({ _tag: "Comment", key: "published:v1" });
@@ -240,5 +240,55 @@ describe("decide", () => {
     const { state } = run([...proposed, approve(), publishFailed("permanent")]);
     expect(state.status).toBe("failed");
     expect(state.failure).toContain("permanent failure");
+  });
+
+  it("retries a failed run with a new run that continues the task", () => {
+    const { state, instructions } = run([
+      labeled,
+      Events.RunFailed.make({ runId: 1, reason: "model error" }),
+    ]);
+    expect(state.status).toBe("running");
+    expect(state.runId).toBe(2);
+    expect(instructions[0]).toMatchObject({ _tag: "Submit", runId: 2, mode: "start" });
+  });
+
+  it("fails instead of reconciling forever when the publish outcome stays unknown", () => {
+    const { state } = run([
+      ...proposed,
+      approve(),
+      publishFailed("ambiguous"),
+      publishFailed("ambiguous"),
+      publishFailed("ambiguous"),
+    ]);
+    expect(state.status).toBe("failed");
+    expect(state.failure).toContain("ambiguous failure");
+  });
+
+  it("starts the next run with input held during publishing, once the publish settles", () => {
+    const pr = { number: 42, url: "https://github.com/acme/shop/pull/42" };
+    const { state, instructions } = run([
+      ...proposed,
+      approve(),
+      input("rename the button"),
+      Events.PublishSucceeded.make(pr),
+    ]);
+    expect(state.status).toBe("running");
+    expect(state.runId).toBe(2);
+    expect(state.queued).toEqual([]);
+    expect(state.pullRequest).toEqual(pr);
+    expect(instructions).toMatchObject([
+      { _tag: "Comment", key: "published:v1" },
+      { _tag: "Submit", runId: 2, mode: "start", text: "rename the button" },
+      { _tag: "Project" },
+    ]);
+  });
+
+  it("records who approved, rejected or cancelled", () => {
+    expect(run([...proposed, approve()]).state.decidedBy).toBe("yuyays");
+    const rejected = Events.Reject.make({ actor: "reviewer2", binding: firstBinding });
+    expect(run([...proposed, rejected]).state.decidedBy).toBe("reviewer2");
+    expect(run([labeled, Events.Cancel.make({ actor: "reviewer3" })]).state.decidedBy).toBe(
+      "reviewer3",
+    );
   });
 });
