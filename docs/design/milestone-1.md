@@ -27,7 +27,7 @@ Inbox (apps/web) ──▶│ inbox API, Access auth           │ instructions 
 
 ## Durability rule (applies everywhere)
 
-**Commit intent, then act, then commit the outcome.** Every external action is an *instruction* stored in the same
+**Commit intent, then act, then commit the outcome.** Every external action is an _instruction_ stored in the same
 Pi commit as the reducer state that produced it. Each instruction runs as a **Pi durable task**, so pending work
 keeps Pi's wake scheduling (and the DO alarm) active; nothing depends on an outbox drain finding work after
 `resume()`. A task executes the external call, then commits its receipt together with the resulting reducer event.
@@ -83,10 +83,10 @@ Policy, approval and queuing rules interact, so they stay in one module. **Test 
 
 ```ts
 interface Workspace {
-  env(): ExecutionEnv                                       // guarded: see below
-  prepare(repo: RepoRef, baseSha: string): Effect<void, WorkspaceError>
-  validate(commands: string[]): Effect<Validation, WorkspaceError>   // frozen candidate: { patch, digest, evidence }
-  quiesce(): Effect<void, WorkspaceError>                  // kill running commands; used by abort and cancel
+  env(): ExecutionEnv; // guarded: see below
+  prepare(repo: RepoRef, baseSha: string): Effect<void, WorkspaceError>;
+  validate(commands: string[]): Effect<Validation, WorkspaceError>; // frozen candidate: { patch, digest, evidence }
+  quiesce(): Effect<void, WorkspaceError>; // kill running commands; used by abort and cancel
 }
 ```
 
@@ -115,11 +115,18 @@ interface Workspace {
 
 ```ts
 interface GitHub {
-  fetchIssueContext(issue: IssueRef): Effect<IssueContext, GitHubError>
-  fetchTarball(repo: RepoRef, sha: string): Effect<ReadableStream, GitHubError>
-  publish(binding: ApprovalBinding, patch: Patch, journal: PublishJournal): Effect<PullRequest, PublishError>
-  reconcile(binding: ApprovalBinding, journal: PublishJournal): Effect<ReconcileResult, GitHubError>
-  comment(issue: IssueRef, key: string, text: string): Effect<void, GitHubError>   // key in a hidden marker
+  fetchIssueContext(issue: IssueRef): Effect<IssueContext, GitHubError>;
+  fetchTarball(repo: RepoRef, sha: string): Effect<ReadableStream, GitHubError>;
+  publish(
+    binding: ApprovalBinding,
+    patch: Patch,
+    journal: PublishJournal,
+  ): Effect<PullRequest, PublishError>;
+  reconcile(
+    binding: ApprovalBinding,
+    journal: PublishJournal,
+  ): Effect<ReconcileResult, GitHubError>;
+  comment(issue: IssueRef, key: string, text: string): Effect<void, GitHubError>; // key in a hidden marker
 }
 ```
 
@@ -162,6 +169,7 @@ secret in deployment). The per-owner `ModelAccess` seam arrives with ChatGPT sig
 Against `alchemy dev` with `LocalWorkspace` or the container, `FakeGitHub`, and faux models, unless noted.
 
 **Happy path**
+
 1. Labeling an issue `agent` creates exactly one session; redelivering the same delivery ID changes nothing.
 2. A session reaches `awaitingApproval` only after validation passes; the inbox shows the patch, digest, base SHA
    and validation output.
@@ -169,29 +177,17 @@ Against `alchemy dev` with `LocalWorkspace` or the container, `FakeGitHub`, and 
    gets exactly one linking comment.
 4. A patch with a binary file, a deletion, and a mode change round-trips into the PR unchanged.
 
-**Approval and input**
-5. A stale binding, a repeated decided approval, and approval outside `awaitingApproval` change nothing; a
-   duplicate of the winning approval is a no-op.
-6. Input during `validating` or `awaitingApproval` invalidates the candidate; the next proposal is `version + 1`, and
-   the old run's late `Validated` is ignored.
-7. Validation failure and run abort each produce a visible state (`running` retry or `failed`), never a stuck one.
+**Approval and input** 5. A stale binding, a repeated decided approval, and approval outside `awaitingApproval` change nothing; a
+duplicate of the winning approval is a no-op. 6. Input during `validating` or `awaitingApproval` invalidates the candidate; the next proposal is `version + 1`, and
+the old run's late `Validated` is ignored. 7. Validation failure and run abort each produce a visible state (`running` retry or `failed`), never a stuck one.
 
-**Crashes** (DO aborted at each point; the session recovers with no further request)
-8. Between `deliver`'s commit and the webhook acknowledgement: the redelivery is deduplicated.
-9. After a checkpoint upload but before its pointer commit, and after the pointer commit but before the tool result.
-10. After each publish stage, and after the PR is created but before its receipt commits: exactly one PR exists.
-11. Mid-tool: the transcript records the interruption and the run continues.
-12. Container destroyed mid-run: the workspace is restored from the latest checkpoint and the model gets the notice.
+**Crashes** (DO aborted at each point; the session recovers with no further request) 8. Between `deliver`'s commit and the webhook acknowledgement: the redelivery is deduplicated. 9. After a checkpoint upload but before its pointer commit, and after the pointer commit but before the tool result. 10. After each publish stage, and after the PR is created but before its receipt commits: exactly one PR exists. 11. Mid-tool: the transcript records the interruption and the run continues. 12. Container destroyed mid-run: the workspace is restored from the latest checkpoint and the model gets the notice.
 
-**Publishing edge cases**
-13. A pre-existing branch at a different commit fails as a visible branch conflict, not a second PR.
-14. Cancel during `running` stops the run and its commands; cancel during `publishing` is refused.
+**Publishing edge cases** 13. A pre-existing branch at a different commit fails as a visible branch conflict, not a second PR. 14. Cancel during `running` stops the run and its commands; cancel during `publishing` is refused.
 
-**Deployed (manual)**
-15. **One real GitHub contract check**: publish against a scratch repo with the GitHub App.
-16. **Deployed to Cloudflare** with `ContainerWorkspace` and a real model: a redeploy mid-run resumes it, and a run
-    with CPU-heavy work in the DO (large transcripts, compaction) stays within the Workers CPU limit. A sleeping
-    tool proves elapsed time only, not CPU budget.
+**Deployed (manual)** 15. **One real GitHub contract check**: publish against a scratch repo with the GitHub App. 16. **Deployed to Cloudflare** with `ContainerWorkspace` and a real model: a redeploy mid-run resumes it, and a run
+with CPU-heavy work in the DO (large transcripts, compaction) stays within the Workers CPU limit. A sleeping
+tool proves elapsed time only, not CPU budget.
 
 ## Build order
 

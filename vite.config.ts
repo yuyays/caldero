@@ -107,7 +107,7 @@ export default defineConfig({
       },
       {
         // Tooling tests under tools/ and the generator measure real processes.
-        files: ["apps/**", "packages/contracts/**"],
+        files: ["apps/**", "packages/contracts/**", "packages/domain/**"],
         rules: {
           "starter/no-wall-clock-in-tests": "error",
           "starter/no-timer-waits-in-tests": "error",
@@ -115,7 +115,11 @@ export default defineConfig({
       },
       {
         // Domain workflows and contracts parse input at their boundary instead of passing it on.
-        files: ["apps/api/src/services/**/*.ts", "packages/contracts/src/**/*.ts"],
+        files: [
+          "apps/api/src/services/**/*.ts",
+          "packages/contracts/src/**/*.ts",
+          "packages/domain/src/**/*.ts",
+        ],
         rules: {
           "anti-slop/no-unknown-parameters": "error",
           "anti-slop/no-unknown-returns": "error",
