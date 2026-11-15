@@ -64,12 +64,17 @@ label exactly `agent`, the configured repository/installation, and non-PR issues
 return 204. The first successful admission fixes the hydrated base and records delivery/sender/label provenance.
 Unknown RPC failures return 503 without acknowledging admission; this does not classify them as transient.
 Identity/schema corruption requires operator repair, and permanent-vs-transient RPC error classification is deferred
-before deployment. A caller must not retry indefinitely. Acknowledgement waits for the durable admission commit; a lost response can be retried with the same delivery ID.
+before deployment. A caller must not retry indefinitely. Hydration precedes session dedupe, so even redelivery may fail on GitHub reads; it never changes an already-admitted
+session's base. Acknowledgement waits for the durable admission commit; a lost response can be retried with the same delivery ID.
 
 API identity comes only from a cryptographically verified Access JWT (RS256, issuer, audience, expiry/not-before).
 The email header and request-body actor are never trusted. Unmapped identities get 403; invalid tokens or JWKS
 failures get 401. All decisions require same-origin JSON. `PUCHERO_DEV_TOKEN` is accepted only in explicit dev mode
 with no Access configuration. Missing production authentication, webhook or App/model configuration fails closed.
+
+Session detail degrades independently: a failed audit read returns an empty activity list with an unavailable flag,
+and a missing/corrupt patch blob returns the authoritative state with a patch-unavailable flag. The UI explains
+these failures and allows stopping the session; it never enables approval without the displayed frozen patch.
 
 D1 migrations live in `migrations/`. D1 stores bounded summaries and revision activity, never file contents or
 validation output. `Project` carries its committed revision's immutable snapshot, so retries cannot relabel a newer

@@ -103,14 +103,10 @@ const SessionRoutes = HttpApiBuilder.group(InboxApi, "sessions", (handlers) =>
         yield* viewer;
         const view = yield* (yield* Sessions).read(params.sessionId);
         if (view === null) return yield* new InboxNotFound({ message: "Session not found" });
-        const audit = yield* (yield* InboxStore)
-          .audit(params.sessionId)
-          .pipe(
-            Effect.mapError(
-              () => new InboxUnavailable({ message: "Audit history is unavailable" }),
-            ),
-          );
-        return { view, audit };
+        const audit = yield* (yield* InboxStore).audit(params.sessionId).pipe(Effect.result);
+        return Result.isFailure(audit)
+          ? { view, audit: [], auditUnavailable: true }
+          : { view, audit: audit.success };
       }),
     )
     .handle("approve", ({ params, payload }) =>

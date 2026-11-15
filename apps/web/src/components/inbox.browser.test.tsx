@@ -41,11 +41,15 @@ const view: SessionView = {
     files: [{ change: "write", path: "notes.txt", content: "aGk=", executable: false }],
   },
 };
-const mount = () => {
+const mount = (initialView: SessionView = view, auditUnavailable = false) => {
   const cache = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
-  cache.setQueryData(detailQuery(binding.sessionId).queryKey, { view, audit: [] });
+  cache.setQueryData(detailQuery(binding.sessionId).queryKey, {
+    view: initialView,
+    audit: [],
+    auditUnavailable,
+  });
   render(
     <QueryClientProvider client={cache}>
       <SessionReview sessionId={binding.sessionId} />
@@ -58,6 +62,33 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("Candidate review", () => {
+  it("disables approval for a missing patch while preserving stop controls and explaining audit failure", async () => {
+    const missing = { ...view, patch: null, patchUnavailable: true };
+    const stopped = { ...missing, state: { ...missing.state, status: "cancelled" } };
+    const fetcher = vi.fn<typeof fetch>((_request, init) =>
+      Promise.resolve(
+        Response.json(
+          init?.method === "POST"
+            ? { result: "applied", view: stopped }
+            : { view: stopped, audit: [], auditUnavailable: true },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const cache = mount(missing, true);
+    expect(screen.getByRole("button", { name: "Approve & open PR" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    expect(screen.getByRole("button", { name: "Stop session" })).toHaveProperty("disabled", false);
+    expect(screen.getByText(/validated patch could not be loaded/)).toBeTruthy();
+    expect(screen.getByText(/Activity history is unavailable/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Stop session" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirm stop" }));
+    await waitFor(() => expect(screen.getByText("Stopped")).toBeTruthy());
+    cache.clear();
+  });
+
   it("sends the displayed binding once and blocks duplicate clicks while approval is pending", async () => {
     let complete: (response: Response) => void = () => {};
     const fetcher = vi.fn<typeof fetch>(

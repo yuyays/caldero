@@ -334,3 +334,10 @@ instructions now freeze their own state snapshot, preserving audit identity acro
 The list is bounded to 100 summaries, detail history to 200 rows; neither API pagination nor global index rebuild
 is included. Decisions use DO state regardless of index lag. See `apps/agent/README.md` for configuration, local
 fixtures, schema compatibility and remaining deployment/live-App checks.
+
+Step-5 review corrections: production repository, installation ID and validation commands must be explicitly
+configured; fixture defaults apply only in dev. A failed D1 audit read or missing patch blob no longer hides session
+state. Detail carries availability flags, the UI explains degradation, and cancellation remains possible; approving
+requires the matching displayed patch. Hydration still precedes delivery dedupe per the admission design: a duplicate
+can fail during hydration without changing durable state. Opening independently known session IDs remains available
+through the API; a direct-open UI shortcut and global index recovery remain deferred.

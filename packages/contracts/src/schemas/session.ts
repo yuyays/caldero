@@ -62,9 +62,17 @@ export const AuditEntry = Schema.Struct({
   updatedAt: Schema.Finite,
 });
 export type AuditEntry = typeof AuditEntry.Type;
-export const SessionView = Schema.Struct({ state: SessionState, patch: Schema.NullOr(Patch) });
+export const SessionView = Schema.Struct({
+  state: SessionState,
+  patch: Schema.NullOr(Patch),
+  patchUnavailable: Schema.optionalKey(Schema.Boolean),
+});
 export type SessionView = typeof SessionView.Type;
-export const SessionDetail = Schema.Struct({ view: SessionView, audit: Schema.Array(AuditEntry) });
+export const SessionDetail = Schema.Struct({
+  view: SessionView,
+  audit: Schema.Array(AuditEntry),
+  auditUnavailable: Schema.optionalKey(Schema.Boolean),
+});
 export type SessionDetail = typeof SessionDetail.Type;
 export const DecisionResponse = Schema.Struct({
   result: Schema.Literals(["applied", "duplicate"]),

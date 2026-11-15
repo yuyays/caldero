@@ -12,8 +12,8 @@ import { scriptedModels } from "./testing.ts";
 export const agentEnvironment = {
   PUCHERO_MODE: Config.String("PUCHERO_MODE").pipe(Config.withDefault("production")),
   PUCHERO_ORIGIN: Config.String("PUCHERO_ORIGIN").pipe(Config.withDefault("http://localhost:1337")),
-  PUCHERO_REPO_OWNER: Config.String("PUCHERO_REPO_OWNER").pipe(Config.withDefault("acme")),
-  PUCHERO_REPO_NAME: Config.String("PUCHERO_REPO_NAME").pipe(Config.withDefault("app")),
+  PUCHERO_REPO_OWNER: Config.String("PUCHERO_REPO_OWNER").pipe(Config.withDefault("")),
+  PUCHERO_REPO_NAME: Config.String("PUCHERO_REPO_NAME").pipe(Config.withDefault("")),
   PUCHERO_POLICY: Config.String("PUCHERO_POLICY").pipe(Config.withDefault("observe")),
   PUCHERO_DEV_TOKEN: Config.Redacted("PUCHERO_DEV_TOKEN").pipe(
     Config.withDefault(Redacted.make("")),
@@ -23,7 +23,7 @@ export const agentEnvironment = {
     Config.withDefault(Redacted.make("")),
   ),
   GITHUB_APP_ID: Config.String("GITHUB_APP_ID").pipe(Config.withDefault("")),
-  GITHUB_INSTALLATION_ID: Config.Int("GITHUB_INSTALLATION_ID").pipe(Config.withDefault(42)),
+  GITHUB_INSTALLATION_ID: Config.Int("GITHUB_INSTALLATION_ID").pipe(Config.withDefault(0)),
   GITHUB_PRIVATE_KEY: Config.Redacted("GITHUB_PRIVATE_KEY").pipe(
     Config.withDefault(Redacted.make("")),
   ),
@@ -32,7 +32,7 @@ export const agentEnvironment = {
   ACCESS_APPROVERS: Config.String("ACCESS_APPROVERS").pipe(Config.withDefault("{}")),
   OPENAI_API_KEY: Config.Redacted("OPENAI_API_KEY").pipe(Config.withDefault(Redacted.make(""))),
   PUCHERO_MODEL: Config.String("PUCHERO_MODEL").pipe(Config.withDefault("")),
-  PUCHERO_CHECKS: Config.String("PUCHERO_CHECKS").pipe(Config.withDefault('["test -f notes.txt"]')),
+  PUCHERO_CHECKS: Config.String("PUCHERO_CHECKS").pipe(Config.withDefault("")),
 };
 const decodeApprovers = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
@@ -47,15 +47,18 @@ export const readAgentSettings = Effect.fn("readAgentSettings")(function* () {
   const mode = yield* agentEnvironment.PUCHERO_MODE;
   const origin = yield* agentEnvironment.PUCHERO_ORIGIN;
   const repo = {
-    owner: yield* agentEnvironment.PUCHERO_REPO_OWNER,
-    name: yield* agentEnvironment.PUCHERO_REPO_NAME,
+    owner: (yield* agentEnvironment.PUCHERO_REPO_OWNER) || (mode === "dev" ? "acme" : ""),
+    name: (yield* agentEnvironment.PUCHERO_REPO_NAME) || (mode === "dev" ? "app" : ""),
   };
   const policy = yield* agentEnvironment.PUCHERO_POLICY;
-  const installationId = yield* agentEnvironment.GITHUB_INSTALLATION_ID;
+  const configuredInstallation = yield* agentEnvironment.GITHUB_INSTALLATION_ID;
+  const installationId =
+    configuredInstallation === 0 && mode === "dev" ? 42 : configuredInstallation;
   const webhookSecret = Redacted.value(yield* agentEnvironment.GITHUB_WEBHOOK_SECRET);
-  const checks = yield* decodeChecks(yield* agentEnvironment.PUCHERO_CHECKS).pipe(
-    Effect.mapError(() => invalid("PUCHERO_CHECKS must be a JSON array of commands")),
-  );
+  const configuredChecks = yield* agentEnvironment.PUCHERO_CHECKS;
+  const checks = yield* decodeChecks(
+    configuredChecks || (mode === "dev" ? '["test -f notes.txt"]' : ""),
+  ).pipe(Effect.mapError(() => invalid("PUCHERO_CHECKS must be a JSON array of commands")));
   if (
     !["dev", "production"].includes(mode) ||
     !["off", "observe"].includes(policy) ||
@@ -63,6 +66,7 @@ export const readAgentSettings = Effect.fn("readAgentSettings")(function* () {
     !repo.name ||
     !webhookSecret ||
     checks.length === 0 ||
+    checks.some((command) => !command.trim()) ||
     installationId <= 0
   )
     return yield* invalid(

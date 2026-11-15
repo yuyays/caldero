@@ -162,6 +162,7 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
       cache.setQueryData(detailQuery(sessionId).queryKey, (old: SessionDetail | undefined) => ({
         view: result.view,
         audit: old?.audit ?? [],
+        auditUnavailable: old?.auditUnavailable ?? false,
       }));
       setNotice(
         result.result === "duplicate"
@@ -178,6 +179,7 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
         cache.setQueryData(detailQuery(sessionId).queryKey, (old: SessionDetail | undefined) => ({
           view: error.view,
           audit: old?.audit ?? [],
+          auditUnavailable: old?.auditUnavailable ?? false,
         }));
         setNotice(
           "The candidate changed. Review the current patch and evidence before deciding again.",
@@ -196,7 +198,7 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
         </Button>
       </section>
     );
-  const { view, audit } = detail.data;
+  const { view, audit, auditUnavailable } = detail.data;
   const { state, patch } = view;
   const candidate = state.candidate;
   const pending = decision.isPending || detail.isFetching;
@@ -239,6 +241,11 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
           <p className="rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-950">{notice}</p>
         )}
       </div>
+      {auditUnavailable && (
+        <p className="mt-4 text-sm text-amber-900">
+          Activity history is unavailable. You can still review and decide on this session.
+        </p>
+      )}
       {state.failure && (
         <p role="alert" className="mt-4 break-words rounded-lg bg-red-50 p-4 text-sm text-red-900">
           {state.failure}
@@ -305,9 +312,11 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
           </pre>
         ) : (
           <p className="rounded-xl bg-stone-100 p-5 text-sm leading-6 text-stone-600">
-            {state.status === "running" || state.status === "validating"
-              ? "The agent is still working. Changes and check results appear here when a candidate is ready."
-              : "No validated patch is available for this session."}
+            {view.patchUnavailable
+              ? "The validated patch could not be loaded. Refresh to retry. Approval is disabled; you can still stop this session."
+              : state.status === "running" || state.status === "validating"
+                ? "The agent is still working. Changes and check results appear here when a candidate is ready."
+                : "No validated patch is available for this session."}
           </p>
         )}
       </section>

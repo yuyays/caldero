@@ -9,7 +9,7 @@ import { makeFakeGitHub } from "./fake-github.ts";
 import { makeInboxAuth, InboxAuth } from "./inbox-auth.ts";
 import { ApplicationRoutes, InboxConfig, Sessions } from "./inbox-http.ts";
 import { InboxStore } from "./inbox-store.ts";
-import { GitHub, GitHubError } from "./ports.ts";
+import { GitHub, GitHubError, ProjectionError } from "./ports.ts";
 
 const repo = { owner: "acme", name: "app" };
 const id = "acme/app#7";
@@ -33,7 +33,7 @@ const setup = Effect.fn("setupInboxHttp")(function* (
     hold?: Promise<void>;
     onAdmission?: () => void;
     policy?: "off" | "observe";
-    failure?: "hydration" | "admission";
+    failure?: "hydration" | "admission" | "audit";
   } = {},
 ) {
   let state = initialSession({ sessionId: id, repo, issue: 7, policy: "observe" });
@@ -59,7 +59,10 @@ const setup = Effect.fn("setupInboxHttp")(function* (
     }),
     Layer.succeed(InboxStore, {
       list: () => Effect.succeed(exists ? [summarizeSession(state)] : []),
-      audit: () => Effect.succeed([]),
+      audit: () =>
+        options.failure === "audit"
+          ? Effect.fail(new ProjectionError({ message: "D1 unavailable" }))
+          : Effect.succeed([]),
     }),
     Layer.effect(
       GitHub,
@@ -146,6 +149,34 @@ const setup = Effect.fn("setupInboxHttp")(function* (
 });
 
 describe("Inbox HTTP", () => {
+  it.effect("keeps authoritative detail and decisions available when audit storage fails", () =>
+    Effect.gen(function* () {
+      const api = yield* setup({ failure: "audit" });
+      yield* api.webhook();
+      const binding = api.propose();
+      const headers = {
+        authorization: "Bearer local-token",
+        origin,
+        "content-type": "application/json",
+      };
+      const path = `/api/sessions/${encodeURIComponent(id)}`;
+      const detail = yield* api.send(path, { headers });
+      expect(detail.status).toBe(200);
+      expect(yield* Effect.promise(() => detail.json())).toMatchObject({
+        view: { state: { candidate: { binding } } },
+        audit: [],
+        auditUnavailable: true,
+      });
+      const cancel = yield* api.send(path + "/cancel", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ requestId: "stop-without-audit" }),
+      });
+      expect(cancel.status).toBe(200);
+      expect(api.view().state.status).toBe("cancelled");
+    }),
+  );
+
   it.effect(
     "rejects oversized or malformed signed deliveries and reports failed admission without acknowledging it",
     () =>
