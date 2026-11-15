@@ -36,13 +36,14 @@ jobs:
       - run: pnpm format:check
       - run: pnpm typecheck
       - run: pnpm test
-      # Chromium is ~130 MB; keying on the lockfile reuses it until Playwright upgrades.
-      # `--with-deps` still installs the system libraries, so only the download is skipped.
+      # Keyed on the lockfile, which pins the Playwright version. The browser tests run
+      # headless, so the ~90 MB headless shell is enough; `--with-deps` still installs
+      # the system libraries, which a binary cache cannot supply.
       - uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: playwright-${{ runner.os }}-
-      - run: pnpm browser:install --with-deps
+      - run: pnpm browser:install --with-deps --only-shell
       - run: pnpm test:browser
       - run: pnpm build

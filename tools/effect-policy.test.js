@@ -78,12 +78,24 @@ function diagnosticsFor(name, file) {
 
 // The first lint assertion writes every declared fixture and lints them in one pass.
 // Declarations live after the tests that use them, so this cannot run in a `before` hook:
-// node:test runs top-level hooks before the rest of the module body.
+// node:test runs top-level hooks before the rest of the module body. A failed pass is
+// rethrown to every later assertion instead of leaving unwritten fixtures looking clean.
 let fixturesLinted = false;
+let fixturesError;
 
 function lintFixtures() {
+  if (fixturesError) throw fixturesError;
   if (fixturesLinted) return;
   fixturesLinted = true;
+  try {
+    lintFixtureSets();
+  } catch (error) {
+    fixturesError = error;
+    throw error;
+  }
+}
+
+function lintFixtureSets() {
   for (const [name, { location, files }] of fixtureSets) {
     // A project without the frontend a skipped test needs lacks that source directory.
     if (!existsSync(join(root, location))) continue;
@@ -97,6 +109,9 @@ function lintFixtures() {
   if (fixtureDirectories.size === 0) return;
   const result = run(vp, ["lint", "--format", "json", ...fixtureDirectories.values()]);
   assert.ok(result.stdout.trimStart().startsWith("{"), result.output);
+  // Every set contains an intentional violation, so a reporting regression that exits
+  // zero would otherwise pass on diagnostics alone.
+  assert.equal(result.status, 1, result.output);
   for (const diagnostic of JSON.parse(result.stdout).diagnostics) {
     const filename = resolve(root, diagnostic.filename);
     for (const [name, directory] of fixtureDirectories) {
