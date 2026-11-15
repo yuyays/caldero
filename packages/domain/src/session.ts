@@ -60,7 +60,7 @@ export const SessionState = Schema.Struct({
   queued: Schema.Array(Schema.String),
   pullRequest: Schema.NullOr(Schema.Struct({ number: Schema.Int, url: Schema.String })),
   failure: Schema.NullOr(Schema.String),
-  /** Who approved, rejected or cancelled, for the audit trail. */
+  /** Who stopped the session, or its historical reviewer, for the audit trail. */
   decidedBy: Schema.NullOr(Schema.String),
   updatedAt: Schema.Finite,
 });

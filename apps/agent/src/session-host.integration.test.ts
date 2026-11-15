@@ -53,6 +53,8 @@ const setup = Effect.fn("setup")(function* (
     readonly validationDefect?: Error;
     /** A persisted session document whose JSON cannot be decoded on reopen. */
     readonly corruptState?: () => boolean;
+    /** A historical JSON fixture returned at the persisted-document read seam. */
+    readonly storedState?: () => string | undefined;
     readonly crashAtCheckpoint?: "uploaded" | "committed";
     readonly wrapGitHub?: (
       github: ReturnType<typeof GitHub.of>,
@@ -135,6 +137,9 @@ const setup = Effect.fn("setup")(function* (
             if (property === "document")
               return async (...args: Parameters<typeof durable.document>) => {
                 const document = await target.document(...args);
+                const storedState = options.storedState?.();
+                if (storedState !== undefined && document?.record.kind === "puchero.session")
+                  return { ...document, value: { ...document.value, state: storedState } };
                 return options.corruptState?.() && document?.record.kind === "puchero.session"
                   ? { ...document, value: { ...document.value, state: "{broken stored JSON" } }
                   : document;
@@ -191,8 +196,8 @@ const setup = Effect.fn("setup")(function* (
   };
 });
 
-/** Runs the labeled issue to its first candidate and returns that candidate's binding. */
-const propose = Effect.fn("propose")(function* (
+/** Runs the labeled issue through publication and returns the published candidate's binding. */
+const publishCandidate = Effect.fn("publishCandidate")(function* (
   host: Effect.Success<ReturnType<typeof setup>>["host"],
 ) {
   yield* host.deliver(labeled, "delivery-1");
@@ -203,6 +208,57 @@ const propose = Effect.fn("propose")(function* (
 });
 
 describe("SessionHost", () => {
+  it.effect(
+    "reads a legacy paused document and supports a fresh run or Stop without publishing the old candidate",
+    () =>
+      Effect.gen(function* () {
+        const legacy = `{
+        "sessionId":"acme/app#7","repo":{"owner":"acme","name":"app"},"issue":7,
+        "policy":"observe","status":"awaitingApproval","revision":3,"runId":1,"version":1,
+        "baseSha":"base-1","baseRef":"main","attempts":0,"queued":[],"pullRequest":null,
+        "failure":null,"decidedBy":null,"updatedAt":1000,
+        "candidate":{"binding":{"sessionId":"acme/app#7","version":1,"runId":1,
+          "repo":{"owner":"acme","name":"app"},"baseSha":"base-1","baseRef":"main",
+          "patchDigest":"old-missing-patch"},"evidence":"historical checks passed"}
+      }`;
+        for (const action of ["input", "stop"]) {
+          let stored: string | undefined;
+          const first = yield* setup({ storedState: () => stored });
+          first.crash();
+          stored = legacy;
+          const next = yield* first.open();
+          stored = undefined;
+          yield* next.host.drain();
+          const paused = yield* next.host.view();
+          expect(paused).toMatchObject({
+            state: { policy: "observe", status: "awaitingApproval", version: 1, decidedBy: null },
+            patch: null,
+            patchUnavailable: true,
+          });
+          expect(first.github.state.pullRequests).toHaveLength(0);
+          const event =
+            action === "input"
+              ? Events.UserInput.make({ text: "Use bullet points." })
+              : Events.Cancel.make({ actor: "ann" });
+          expect(yield* next.host.deliver(event, "legacy-control")).toBe("applied");
+          yield* next.host.drain();
+          const result = yield* next.host.view();
+          if (action === "input") {
+            expect(result.state).toMatchObject({
+              status: "published",
+              runId: 2,
+              version: 2,
+              decidedBy: null,
+            });
+            expect(first.github.state.pullRequests).toHaveLength(1);
+            expect(first.github.state.pullRequests[0]?.patch.digest).not.toBe("old-missing-patch");
+          } else {
+            expect(result.state).toMatchObject({ status: "cancelled", decidedBy: "ann" });
+            expect(first.github.state.pullRequests).toHaveLength(0);
+          }
+        }
+      }),
+  );
   it.effect(
     "publishes automatically after validation and reconciles a lost response to one PR",
     () =>
@@ -248,7 +304,7 @@ describe("SessionHost", () => {
       Effect.gen(function* () {
         let corrupt = false;
         const { host, crash, open, corruptWrites } = yield* setup({ corruptState: () => corrupt });
-        const binding = yield* propose(host);
+        const binding = yield* publishCandidate(host);
         crash();
         corrupt = true;
         expect(yield* open().pipe(Effect.scoped, Effect.flip)).toMatchObject({
@@ -265,7 +321,7 @@ describe("SessionHost", () => {
   it.effect("keeps published session details available when its frozen patch blob is lost", () =>
     Effect.gen(function* () {
       const { host, store, github } = yield* setup();
-      const binding = yield* propose(host);
+      const binding = yield* publishCandidate(host);
       store.blobs.clear();
       const missing = yield* host.view();
       expect(missing).toMatchObject({
@@ -410,7 +466,7 @@ describe("SessionHost", () => {
                 }),
                 { stopReason: "toolUse" },
               );
-        yield* propose(host);
+        yield* publishCandidate(host);
         yield* host.drain();
         expect((yield* host.view()).state.status).toBe("published");
         expect(github.state.pullRequests[0]?.patch.files).toEqual([
@@ -530,7 +586,7 @@ describe("SessionHost", () => {
       const { host, github } = yield* setup({
         github: { branches: [["puchero/7-v1", "someone-else"]] },
       });
-      yield* propose(host);
+      yield* publishCandidate(host);
       yield* host.drain();
 
       const { state } = yield* host.view();

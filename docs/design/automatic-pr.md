@@ -28,7 +28,7 @@ An old `awaitingApproval` candidate stays paused and cannot publish from a repla
 start run + 1 with a new candidate version; its successful validation publishes automatically. Stop can cancel the
 paused session. A legacy run already running or validating publishes its next successfully validated candidate.
 Already committed Publish/Reconcile tasks resume unchanged. Removing HTTP approval routes is a breaking client change;
-the bundled client is updated together. Older binaries that cannot decode `auto` still require a compatible rollback.
+the bundled client is updated together. Every new session stores `auto`, so rollback requires a build that can decode `auto` for all new sessions.
 
 ## Acceptance criteria
 

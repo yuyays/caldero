@@ -73,6 +73,7 @@ describe("Candidate review", () => {
       },
     };
     const cache = mount(automatic);
+    expect(screen.getByText(/24 tests passed/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "Open pull request #123" })).toHaveProperty(
       "href",
       "https://github.com/acme/app/pull/123",
