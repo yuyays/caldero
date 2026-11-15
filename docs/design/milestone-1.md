@@ -2,16 +2,19 @@
 
 # puchero milestone 1: issue → patch → approval → PR
 
-**Goal.** A GitHub issue labeled `agent` gets one durable session. An agent works on it in a sandbox, produces a
-validated, immutable patch, and waits. A human approves that exact patch in the inbox, and puchero opens the PR.
-Everything survives deploys, evictions, and container resets.
+The later [automatic PR change](automatic-pr.md) adds `auto` alongside approval-required `observe`. That update
+supersedes the mandatory gate in the original milestone below; existing sessions keep their stored policy.
+
+**Goal.** A GitHub issue labeled `agent` gets one durable session. An agent works on it in a sandbox and produces a
+validated, immutable patch. In `auto`, it opens the PR immediately after validation. In `observe`, it waits for a
+human to approve that exact patch in the inbox. Everything survives deploys, evictions, and container resets.
 
 Built on the spike's verdict ([spike-pi-do-container.md](../research/spike-pi-do-container.md)) and the
 [Open SWE comparison](../research/open-swe-comparison.md). Vocabulary follows `codebase-design`: module,
 interface, seam, adapter, depth.
 
 **Out of scope:** Slack, cron, CI and review follow-ups as new runs, multiple users, ChatGPT sign-in, the audience
-model, the `auto` policy, a scheduler, preview environments, and deleting `apps/api` (a separate cleanup).
+model, a scheduler, preview environments, and deleting `apps/api` (a separate cleanup).
 
 ## Shape
 
@@ -47,10 +50,11 @@ decide(state: SessionState, event: SessionEvent, now: Instant): { state: Session
   `Cancel(actor)`, `PublishSucceeded(pr)`, `PublishFailed(kind: "retryable" | "permanent" | "ambiguous")`.
 - **Instructions** (data, each with a unique `instructionId`): `Submit(draft)`, `Validate(runId)`, `AbortRun`,
   `Publish(binding)`, `Reconcile(binding)`, `Project(revision, snapshot)`, `Comment(key, text)`.
-- **States:** `idle → running → validating → awaitingApproval → publishing → published`, plus `rejected`,
+- **States:** `idle → running → validating → awaitingApproval → publishing → published` in observe; auto skips
+  `awaitingApproval` and commits Publish with the validated candidate. Also `rejected`,
   `cancelled`, `failed`. `version` increments with every proposed candidate; `runId` identifies each Pi run.
 - **Rules it owns:**
-  - Policy `off | observe` (milestone 1), resolved by `SessionDO` for the repo and label when the session is
+  - Policy `off | observe | auto`, resolved by `SessionDO` for the repo and label when the session is
     created; the reducer enforces it.
   - **Approval binding** `(sessionId, version, runId, repo, baseRef, baseSha, patchDigest)`. A mismatch, a repeat of a
     decided approval, or any state but `awaitingApproval` is rejected as stale; a duplicate of the winning approval
@@ -178,7 +182,8 @@ Against `alchemy dev` with `LocalWorkspace` or the container, `FakeGitHub`, and 
 1. Labeling an issue `agent` creates exactly one session; redelivering the same delivery ID changes nothing.
 2. A session reaches `awaitingApproval` only after validation passes; the inbox shows the patch, digest, base SHA
    and validation output.
-3. Approving opens exactly one PR on `puchero/<issue>-v<version>`, the session becomes `published`, and the issue
+3. Publishing (automatically in auto, after approval in observe) opens exactly one PR on `puchero/<issue>-v<version>`,
+   the session becomes `published`, and the issue
    gets exactly one linking comment.
 4. A patch with a binary file, a deletion, and a mode change round-trips into the PR unchanged.
 
@@ -341,3 +346,12 @@ state. Detail carries availability flags, the UI explains degradation, and cance
 requires the matching displayed patch. Hydration still precedes delivery dedupe per the admission design: a duplicate
 can fail during hydration without changing durable state. Opening independently known session IDs remains available
 through the API; a direct-open UI shortcut and global index recovery remain deferred.
+
+### Automatic publication follow-up
+
+`auto` publishes a validated current-run candidate immediately through the existing durable Publish/Reconcile path.
+`observe` preserves the original approval gate, and `off` blocks new admissions. Real-service mode requires an
+explicit choice; development defaults to auto. The policy is stored at session creation, so existing sessions are
+not silently converted. There is no synthetic human approval, and `decidedBy` stays null for auto publication.
+The inbox detail shows the saved mode. PR creation is automatic; merging remains separate. See
+[automatic-pr.md](automatic-pr.md) for stop behavior, validation/replay criteria and rollback considerations.

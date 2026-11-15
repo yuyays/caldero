@@ -1,9 +1,17 @@
+import { Schema } from "effect";
 import { describe, expect, it } from "@effect/vitest";
-import { decide, type Decision, Events, initialSession, type SessionEvent } from "./session.ts";
+import {
+  decide,
+  type Decision,
+  Events,
+  initialSession,
+  Policy,
+  type SessionEvent,
+} from "./session.ts";
 
 const now = 1_800_000_000_000;
 const repo = { owner: "acme", name: "shop" };
-const fresh = (policy: "off" | "observe" = "observe") =>
+const fresh = (policy: Policy = "observe") =>
   initialSession({ sessionId: "github:acme/shop#7", repo, issue: 7, policy });
 
 /** Applies events in order, returning the last decision. */
@@ -38,6 +46,79 @@ const input = (text: string) => Events.UserInput.make({ text });
 const approve = (binding = firstBinding) => Events.Approve.make({ actor: "yuyays", binding });
 
 describe("decide", () => {
+  it("publishes a validated frozen candidate automatically without recording a human approval", () => {
+    const automatic = fresh(Schema.decodeUnknownSync(Policy)("auto"));
+    const decision = run(proposed, automatic);
+    expect(decision.state).toMatchObject({
+      status: "publishing",
+      version: 1,
+      decidedBy: null,
+      candidate: { binding: firstBinding, evidence: "typecheck ok, 12 tests passed" },
+    });
+    expect(decision.instructions).toMatchObject([
+      { _tag: "Publish", binding: firstBinding },
+      { _tag: "Project" },
+    ]);
+    const project = decision.instructions.find((instruction) => instruction["_tag"] === "Project");
+    if (project?.["_tag"] !== "Project") expect.unreachable();
+    expect(JSON.parse(project.snapshot)).toMatchObject({
+      policy: "auto",
+      status: "publishing",
+      candidate: { binding: firstBinding },
+    });
+    const repeated = decide(decision.state, validated(1, "sha256:aaa"), now);
+    expect(repeated.result).toBe("stale");
+    expect(repeated.instructions).toEqual([]);
+  });
+
+  it("refuses human approve and reject actions for automatic sessions", () => {
+    const automatic = run(proposed, fresh(Schema.decodeUnknownSync(Policy)("auto"))).state;
+    for (const event of [
+      approve(),
+      Events.Reject.make({ actor: "someone", binding: firstBinding }),
+    ]) {
+      const decision = decide(automatic, event, now);
+      expect(decision.result).toBe("stale");
+      expect(decision.state).toBe(automatic);
+      expect(decision.instructions).toEqual([]);
+      expect(decision.state.decidedBy).toBeNull();
+    }
+  });
+  it("never publishes failed or stale auto validation and validates queued input as a new candidate", () => {
+    const automatic = fresh(Schema.decodeUnknownSync(Policy)("auto"));
+    const failed = run(
+      [labeled, answered(1), Events.ValidationFailed.make({ runId: 1, evidence: "tests failed" })],
+      automatic,
+    );
+    expect(failed.state).toMatchObject({ status: "running", runId: 2, candidate: null });
+    expect(failed.instructions.some((instruction) => instruction["_tag"] === "Publish")).toBe(
+      false,
+    );
+    const oldResult = decide(failed.state, validated(1, "old"), now);
+    expect(oldResult.result).toBe("stale");
+    expect(oldResult.instructions).toEqual([]);
+    const next = run(
+      [
+        ...proposed,
+        input("Make another change"),
+        Events.PublishSucceeded.make({ number: 1, url: "https://example.com/pr/1" }),
+        answered(2),
+        validated(2, "sha256:next"),
+      ],
+      automatic,
+    );
+    expect(next.state).toMatchObject({
+      status: "publishing",
+      version: 2,
+      runId: 2,
+      decidedBy: null,
+      candidate: { binding: { patchDigest: "sha256:next", version: 2, runId: 2 } },
+    });
+    expect(next.instructions[0]).toMatchObject({
+      _tag: "Publish",
+      binding: { patchDigest: "sha256:next", version: 2 },
+    });
+  });
   it("keeps the state of each projected revision even when later events change the session", () => {
     const first = run([labeled]);
     const projected = first.instructions.find((instruction) => instruction["_tag"] === "Project");

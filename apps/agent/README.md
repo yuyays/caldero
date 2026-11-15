@@ -29,8 +29,9 @@ console.log(response.status);
 JS
 ```
 
-The session reaches `awaitingApproval` after writing and checking `notes.txt`. The inbox shows its diff, digest,
-base, version and validation evidence. Approve opens a fake PR. Repeating the delivery ID does not change the
+By default, a new local session writes and checks `notes.txt`, then opens a fake PR automatically. Set
+`PUCHERO_POLICY=observe` before starting the agent to exercise the approval-required flow. The inbox shows its diff, digest,
+base, version and validation evidence. In approval-required mode, Approve opens the fake PR. Repeating the delivery ID does not change the
 session. Reject/Stop ask for confirmation; sending instructions while awaiting approval explicitly replaces the
 candidate. A stale decision returns HTTP 409 with the fresh session; the page displays it before another decision.
 The unauthenticated `/s/:name/deliver` development route has been removed.
@@ -44,19 +45,19 @@ as the Worker and needs no `VITE_API_URL`. Local tokens stay in page memory, nev
 Production is the default mode. Set these environment inputs before running Alchemy; the Worker declares each as
 an explicit binding and marks credentials redacted. Keep secrets out of git and the sandbox.
 
-| Setting                                   | Value                                                                           |
-| ----------------------------------------- | ------------------------------------------------------------------------------- |
-| `PUCHERO_ORIGIN`                          | Exact HTTPS inbox origin, no trailing slash                                     |
-| `PUCHERO_REPO_OWNER`, `PUCHERO_REPO_NAME` | One configured repository                                                       |
-| `PUCHERO_POLICY`                          | `observe` (default) or `off`                                                    |
-| `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID` | Installed GitHub App identity                                                   |
-| `GITHUB_PRIVATE_KEY`                      | Secret PEM App key                                                              |
-| `GITHUB_WEBHOOK_SECRET`                   | Secret matching GitHub's webhook configuration                                  |
-| `ACCESS_ISSUER`                           | Team issuer, e.g. `https://team.cloudflareaccess.com`                           |
-| `ACCESS_AUDIENCE`                         | This Access application's audience                                              |
-| `ACCESS_APPROVERS`                        | JSON map of verified email to GitHub login, e.g. `{"ann@example.com":"ann"}`    |
-| `OPENAI_API_KEY`, `PUCHERO_MODEL`         | Secret API key and explicit OpenAI model ID                                     |
-| `PUCHERO_CHECKS`                          | Nonempty JSON array of validation commands baked into the sandbox's environment |
+| Setting                                   | Value                                                                                                                                               |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUCHERO_ORIGIN`                          | Exact HTTPS inbox origin, no trailing slash                                                                                                         |
+| `PUCHERO_REPO_OWNER`, `PUCHERO_REPO_NAME` | One configured repository                                                                                                                           |
+| `PUCHERO_POLICY`                          | Required in real-service mode: `auto` opens PRs after validation, `observe` requires approval, `off` blocks new admissions. Dev defaults to `auto`. |
+| `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID` | Installed GitHub App identity                                                                                                                       |
+| `GITHUB_PRIVATE_KEY`                      | Secret PEM App key                                                                                                                                  |
+| `GITHUB_WEBHOOK_SECRET`                   | Secret matching GitHub's webhook configuration                                                                                                      |
+| `ACCESS_ISSUER`                           | Team issuer, e.g. `https://team.cloudflareaccess.com`                                                                                               |
+| `ACCESS_AUDIENCE`                         | This Access application's audience                                                                                                                  |
+| `ACCESS_APPROVERS`                        | JSON map of verified email to GitHub login, e.g. `{"ann@example.com":"ann"}`                                                                        |
+| `OPENAI_API_KEY`, `PUCHERO_MODEL`         | Secret API key and explicit OpenAI model ID                                                                                                         |
+| `PUCHERO_CHECKS`                          | Nonempty JSON array of validation commands baked into the sandbox's environment                                                                     |
 
 Configure an Access application for the inbox/API. Exclude `/webhooks/github` from Access so GitHub can reach it;
 the Worker authenticates that route with HMAC on the original bytes. Subscribe to issue events. Only `labeled`,
@@ -139,3 +140,17 @@ pnpm exec vp test run apps/agent/src/github-app.contract.integration.test.ts
 The App must be installed on that repository with Contents, Pull requests and Issues write permissions. Reuse the
 journal file to re-check the same publication after a restart; use a new filename for a separate check. The SDK
 also accepts `apiUrl` for GitHub Enterprise or a local contract peer; no credentials are copied into the workspace.
+
+## Automatic publication
+
+Set `PUCHERO_POLICY=auto` for the intended real-service run. Human approval before opening a PR is optional:
+`observe` retains the exact-binding approval screen, and `off` prevents new admissions. The detail view identifies
+the saved session's mode; the D1 navigation summary does not carry policy. Approval/rejection endpoints refuse auto
+sessions. The model still cannot declare validation successful; only the workspace validation outcome starts publication.
+
+Policy is frozen when a session is created. Existing observe sessions keep waiting for approval after an upgrade or
+configuration change. Likewise, setting the environment to off does not stop existing auto sessions. Stop works only
+before publication begins; once publishing starts, its remote outcome may already have landed. This change creates
+PRs automatically but never merges them. See [automatic PR design](../../docs/design/automatic-pr.md) for acceptance
+criteria and rollback compatibility. Your existing GitHub App permissions remain sufficient; no additional scopes
+are requested for automatic publication.

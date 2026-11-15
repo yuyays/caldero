@@ -45,9 +45,9 @@ export function Inbox() {
       <header className="mb-8 flex flex-wrap items-center justify-between gap-4 border-b border-stone-300 pb-6">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
-            Puchero <span className="font-normal text-stone-600">/ Review inbox</span>
+            Puchero <span className="font-normal text-stone-600">/ Agent inbox</span>
           </h1>
-          <p className="mt-2 text-sm text-stone-600">Agent work, ready for your decision.</p>
+          <p className="mt-2 text-sm text-stone-600">Autonomous agent work and pull requests.</p>
         </div>
         <div className="flex items-center gap-4 text-sm">
           <span>{viewer.data ? `Reviewing as ${viewer.data.login}` : "Sign-in required"}</span>
@@ -139,10 +139,10 @@ export function Inbox() {
         ) : (
           <section className="flex min-h-80 flex-col items-center justify-center border-y border-stone-200 px-6 text-center">
             <GitPullRequest className="mb-4 text-stone-500" size={28} aria-hidden="true" />
-            <h2 className="text-xl font-medium">A place to review agent work</h2>
+            <h2 className="text-xl font-medium">A place to follow agent work</h2>
             <p className="mt-2 max-w-md text-sm leading-6 text-stone-600">
-              When an agent finishes its checks, select the session to inspect its changes and
-              decide whether to open a pull request.
+              Select a session to inspect its changes, check results and pull request. Sessions
+              using approval mode wait for your decision before publishing.
             </p>
           </section>
         )}
@@ -268,6 +268,16 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
         </a>
       )}
       <dl className="my-6 grid gap-4 border-y border-stone-200 py-5 text-sm sm:grid-cols-2">
+        <div className="sm:col-span-2">
+          <dt className="text-stone-600">Publication mode</dt>
+          <dd className="mt-1 font-medium">
+            {state.policy === "auto"
+              ? "Automatic PR"
+              : state.policy === "observe"
+                ? "Approval required"
+                : "Disabled"}
+          </dd>
+        </div>
         <div>
           <dt className="text-stone-600">Candidate / run</dt>
           <dd className="mt-1 tabular-nums">
@@ -326,21 +336,29 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
       </section>
       <section className="my-6 border-y border-stone-300 py-5" aria-label="Review actions">
         <p className="mb-4 text-sm text-stone-600">
-          Approving opens a pull request with the exact candidate shown above.
+          {state.policy === "auto"
+            ? "This session opens a pull request automatically after validation. Merging is a separate decision."
+            : state.policy === "observe"
+              ? "Approving opens a pull request with the exact candidate shown above."
+              : "Agent work is disabled for this session."}
         </p>
         <div className="flex flex-wrap gap-3">
-          <Button disabled={!reviewable || blocked} onClick={() => act("approve")}>
-            {decision.isPending && decision.variables.action === "approve"
-              ? "Approving…"
-              : "Approve & open PR"}
-          </Button>
-          <Button
-            variant="outline"
-            disabled={!reviewable || blocked}
-            onClick={() => setConfirm("reject")}
-          >
-            Reject candidate
-          </Button>
+          {state.policy === "observe" && (
+            <>
+              <Button disabled={!reviewable || blocked} onClick={() => act("approve")}>
+                {decision.isPending && decision.variables.action === "approve"
+                  ? "Approving…"
+                  : "Approve & open PR"}
+              </Button>
+              <Button
+                variant="outline"
+                disabled={!reviewable || blocked}
+                onClick={() => setConfirm("reject")}
+              >
+                Reject candidate
+              </Button>
+            </>
+          )}
           <Button
             variant="outline"
             disabled={!cancellable || blocked}

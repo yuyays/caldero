@@ -6,7 +6,7 @@ import {
   SessionFault,
   summarizeSession,
 } from "@puchero/contracts/inbox";
-import { decide, Events, initialSession } from "@puchero/domain";
+import { decide, Events, initialSession, type Policy } from "@puchero/domain";
 import { Effect, Fiber, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import { HttpApiClient } from "effect/http-api";
@@ -37,12 +37,17 @@ const setup = Effect.fn("setupInboxHttp")(function* (
   options: {
     hold?: Promise<void>;
     onAdmission?: () => void;
-    policy?: "off" | "observe";
+    policy?: Policy;
     failure?: "hydration" | "admission" | "audit" | "permanent";
     unavailableReason?: "temporary" | "overloaded" | "unknown";
   } = {},
 ) {
-  let state = initialSession({ sessionId: id, repo, issue: 7, policy: "observe" });
+  let state = initialSession({
+    sessionId: id,
+    repo,
+    issue: 7,
+    policy: options.policy ?? "observe",
+  });
   let exists = false;
   let starts = 0;
   let admissionContext = "";
@@ -178,6 +183,31 @@ const setup = Effect.fn("setupInboxHttp")(function* (
 });
 
 describe("Inbox HTTP", () => {
+  it.effect(
+    "refuses human approval and rejection for automatic sessions without recording an actor",
+    () =>
+      Effect.gen(function* () {
+        const api = yield* setup({ policy: "auto" });
+        yield* api.webhook();
+        const binding = api.propose();
+        for (const action of ["approve", "reject"]) {
+          const response = yield* api.send(`/api/sessions/${encodeURIComponent(id)}/${action}`, {
+            method: "POST",
+            headers: {
+              authorization: "Bearer local-token",
+              origin,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({ binding, requestId: `auto-${action}` }),
+          });
+          expect(response.status).toBe(409);
+          expect(yield* Effect.promise(() => response.json())).toMatchObject({
+            view: { state: { policy: "auto", status: "publishing", decidedBy: null } },
+          });
+        }
+      }),
+  );
+
   it.effect("preserves availability diagnostics in signed webhook failure responses", () =>
     Effect.gen(function* () {
       for (const reason of ["temporary", "overloaded", "unknown"] as const) {

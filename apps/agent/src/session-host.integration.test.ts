@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { MemoryStorage } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "@effect/vitest";
-import { Events } from "@puchero/domain";
+import { Events, type Policy } from "@puchero/domain";
 import { Effect, Layer } from "effect";
 import { Base64 } from "effect/encoding";
 import { makeFakeGitHub } from "./fake-github.ts";
@@ -43,6 +43,7 @@ const signal = () => {
  */
 const setup = Effect.fn("setup")(function* (
   options: {
+    readonly policy?: Policy;
     readonly checks?: (root: string) => ReadonlyArray<string>;
     readonly github?: Omit<Parameters<typeof makeFakeGitHub>[0], "source">;
     /** Runs when a tool starts writing a file, before the write. */
@@ -169,7 +170,7 @@ const setup = Effect.fn("setup")(function* (
           },
         }),
       ),
-      session: { sessionId: "acme/app#7", repo, issue: 7, policy: "observe" },
+      session: { sessionId: "acme/app#7", repo, issue: 7, policy: options.policy ?? "observe" },
       models: scripted.models,
       model: scripted.model,
     }).pipe(Effect.provide(services));
@@ -203,6 +204,64 @@ const propose = Effect.fn("propose")(function* (
 });
 
 describe("SessionHost", () => {
+  it.effect(
+    "publishes automatically after validation and reconciles a lost response to one PR",
+    () =>
+      Effect.gen(function* () {
+        const { host, github } = yield* setup({
+          policy: "auto",
+          github: { dropResponses: { kind: "ambiguous", times: 1 } },
+        });
+        yield* host.deliver(labeled, "auto-label");
+        yield* host.drain();
+        const view = yield* host.view();
+        expect(view.state).toMatchObject({
+          policy: "auto",
+          status: "published",
+          version: 1,
+          runId: 1,
+          decidedBy: null,
+        });
+        expect(view.state.candidate?.binding.patchDigest).toBe(view.patch?.digest);
+        expect(view.state.candidate?.evidence).toContain("(exit 0)");
+        expect(github.state.pullRequests).toHaveLength(1);
+        expect(github.state.pullRequests[0]?.patch.digest).toBe(view.patch?.digest);
+        expect(github.state.comments).toHaveLength(1);
+        yield* host.deliver(labeled, "auto-label");
+        yield* host.drain();
+        expect(github.state.pullRequests).toHaveLength(1);
+      }),
+  );
+  it.effect("never automatically publishes a patch that fails validation", () =>
+    Effect.gen(function* () {
+      const { host, github } = yield* setup({ policy: "auto", checks: () => ["false"] });
+      yield* host.deliver(labeled, "auto-failed-label");
+      yield* host.drain();
+      expect((yield* host.view()).state).toMatchObject({
+        status: "failed",
+        candidate: null,
+        attempts: 3,
+      });
+      expect(github.state.pullRequests).toHaveLength(0);
+    }),
+  );
+  it.effect(
+    "preserves an existing manual-approval session when a reopened host is configured for auto",
+    () =>
+      Effect.gen(function* () {
+        const options: { policy: Policy } = { policy: "observe" };
+        const { host, crash, open, github } = yield* setup(options);
+        const binding = yield* propose(host);
+        crash();
+        options.policy = "auto";
+        const next = yield* open();
+        const view = yield* next.host.view();
+        expect(view.state).toMatchObject({ policy: "observe", status: "awaitingApproval" });
+        expect(view.state.candidate?.binding).toEqual(binding);
+        expect(github.state.pullRequests).toHaveLength(0);
+      }),
+  );
+
   it.effect(
     "refuses corrupt persisted state as a permanent fault without replacing the candidate",
     () =>
@@ -241,55 +300,66 @@ describe("SessionHost", () => {
     }),
   );
 
-  it.effect("retains a publish receipt in Pi when its host dies before returning the result", () =>
-    Effect.gen(function* () {
-      let interrupted = false;
-      let resumedCommit: string | null = null;
-      const first = yield* setup({
-        wrapGitHub: (github, crash) => ({
-          ...github,
-          publish: (issue, binding, patch, journal) =>
-            Effect.gen(function* () {
-              const saved = yield* journal.read();
-              if (saved === null) {
-                yield* journal.save({
-                  binding,
-                  issue,
-                  author: { name: "bot", email: "bot@example.com", date: "2026-01-01T00:00:00Z" },
-                  message: "fixed message",
-                  title: "fixed title",
-                  body: "fixed body",
-                  baseTree: "tree",
-                  blobs: [],
-                  treeSha: "new-tree",
-                  commitSha: "committed-on-github",
-                  refCreated: false,
-                  pullRequest: null,
-                });
-                interrupted = true;
-                crash();
-                return yield* Effect.die(new Error("Process died after the durable receipt"));
-              }
-              resumedCommit = saved.commitSha;
-              return yield* github.publish(issue, binding, patch, journal);
-            }).pipe(
-              Effect.catchTag("GitHubError", (error) =>
-                Effect.fail(new PublishError({ kind: "ambiguous", message: error.message })),
-              ),
-            ),
+  for (const policy of ["observe", "auto"] as const) {
+    it.effect(
+      `retains a ${policy} publish receipt in Pi when its host dies before returning the result`,
+      () =>
+        Effect.gen(function* () {
+          let interrupted = false;
+          let resumedCommit: string | null = null;
+          const first = yield* setup({
+            policy,
+            wrapGitHub: (github, crash) => ({
+              ...github,
+              publish: (issue, binding, patch, journal) =>
+                Effect.gen(function* () {
+                  const saved = yield* journal.read();
+                  if (saved === null) {
+                    yield* journal.save({
+                      binding,
+                      issue,
+                      author: {
+                        name: "bot",
+                        email: "bot@example.com",
+                        date: "2026-01-01T00:00:00Z",
+                      },
+                      message: "fixed message",
+                      title: "fixed title",
+                      body: "fixed body",
+                      baseTree: "tree",
+                      blobs: [],
+                      treeSha: "new-tree",
+                      commitSha: "committed-on-github",
+                      refCreated: false,
+                      pullRequest: null,
+                    });
+                    interrupted = true;
+                    crash();
+                    return yield* Effect.die(new Error("Process died after the durable receipt"));
+                  }
+                  resumedCommit = saved.commitSha;
+                  return yield* github.publish(issue, binding, patch, journal);
+                }).pipe(
+                  Effect.catchTag("GitHubError", (error) =>
+                    Effect.fail(new PublishError({ kind: "ambiguous", message: error.message })),
+                  ),
+                ),
+            }),
+          });
+          if (policy === "observe") {
+            const binding = yield* propose(first.host);
+            yield* first.host.deliver(Events.Approve.make({ actor: "ann", binding }), "approve");
+          } else yield* first.host.deliver(labeled, "auto-crash-label");
+          yield* first.crashed;
+          const next = yield* first.open();
+          yield* next.host.drain();
+          expect(interrupted).toBe(true);
+          expect(resumedCommit).toBe("committed-on-github");
+          expect((yield* next.host.view()).state.status).toBe("published");
+          expect(first.github.state.pullRequests).toHaveLength(1);
         }),
-      });
-      const binding = yield* propose(first.host);
-      yield* first.host.deliver(Events.Approve.make({ actor: "ann", binding }), "approve");
-      yield* first.crashed;
-      const next = yield* first.open();
-      yield* next.host.drain();
-      expect(interrupted).toBe(true);
-      expect(resumedCommit).toBe("committed-on-github");
-      expect((yield* next.host.view()).state.status).toBe("published");
-      expect(first.github.state.pullRequests).toHaveLength(1);
-    }),
-  );
+    );
+  }
   for (const crashAtCheckpoint of ["uploaded", "committed"] as const) {
     it.effect(
       `recovers after checkpoint ${crashAtCheckpoint}, before the tool result, and restores on a changed boot`,

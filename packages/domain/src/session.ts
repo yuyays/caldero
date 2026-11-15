@@ -29,10 +29,10 @@ export const Status = Schema.Literals([
 ]);
 export type Status = typeof Status.Type;
 
-export const Policy = Schema.Literals(["off", "observe"]);
+export const Policy = Schema.Literals(["off", "observe", "auto"]);
 export type Policy = typeof Policy.Type;
 
-/** A validated, frozen patch proposed for approval. */
+/** A validated, frozen patch bound to its publication or optional approval. */
 export const Candidate = Schema.Struct({
   binding: ApprovalBinding,
   evidence: Schema.String,
@@ -256,12 +256,19 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
         baseRef: state.baseRef,
         patchDigest,
       };
-      return applied({
-        status: "awaitingApproval",
-        version,
-        attempts: 0,
-        candidate: { binding, evidence },
-      });
+      const automatic = state.policy === "auto";
+      return applied(
+        {
+          status: automatic ? "publishing" : "awaitingApproval",
+          version,
+          attempts: 0,
+          candidate: { binding, evidence },
+          ...(automatic ? { decidedBy: null } : {}),
+        },
+        automatic
+          ? [(instructionId) => Instruction.cases.Publish.make({ instructionId, binding })]
+          : [],
+      );
     },
     ValidationFailed: ({ runId, evidence }) => {
       if (!isCurrentRun(runId, "validating")) return unchanged("stale");
@@ -278,6 +285,7 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
       );
     },
     Approve: ({ actor, binding }) => {
+      if (state.policy !== "observe") return unchanged("stale");
       if (!matchesCandidate(binding)) return unchanged("stale");
       if (state.status === "publishing" || state.status === "published")
         return unchanged("duplicate");
@@ -287,6 +295,7 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
       ]);
     },
     Reject: ({ actor, binding }) => {
+      if (state.policy !== "observe") return unchanged("stale");
       if (!matchesCandidate(binding)) return unchanged("stale");
       if (state.status === "rejected") return unchanged("duplicate");
       if (state.status !== "awaitingApproval") return unchanged("stale");

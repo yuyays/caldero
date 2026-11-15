@@ -1,7 +1,8 @@
+import { Schema } from "effect";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { SessionFault, type SessionView } from "@puchero/contracts/inbox";
+import { SessionFault, SessionView } from "@puchero/contracts/inbox";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { SessionReview } from "./inbox.js";
 import { detailQuery } from "../lib/inbox.js";
@@ -62,6 +63,27 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("Candidate review", () => {
+  it("identifies automatic publication and links the opened PR without asking for approval", () => {
+    const automatic = Schema.decodeUnknownSync(SessionView)({
+      ...view,
+      state: {
+        ...view.state,
+        policy: "auto",
+        status: "published",
+        pullRequest: { number: 123, url: "https://github.com/acme/app/pull/123" },
+      },
+    });
+    const cache = mount(automatic);
+    expect(screen.getByText("Automatic PR")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open pull request #123" })).toHaveProperty(
+      "href",
+      "https://github.com/acme/app/pull/123",
+    );
+    expect(screen.queryByRole("button", { name: "Approve & open PR" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reject candidate" })).toBeNull();
+    cache.clear();
+  });
+
   it("explains permanent session faults without offering another retry or allowing another decision", async () => {
     const fetcher = vi.fn<typeof fetch>(() =>
       Promise.resolve(

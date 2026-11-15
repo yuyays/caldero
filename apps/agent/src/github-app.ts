@@ -228,8 +228,8 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
     );
     return data === null ? null : (yield* refResponse(data)).object.sha;
   });
-  /** A new publication cannot silently retarget an approval to a changed base branch. */
-  const requireApprovedBase = Effect.fn("GitHubApp.requireApprovedBase")(
+  /** A new publication cannot silently retarget a validated candidate to a changed base branch. */
+  const requireCandidateBase = Effect.fn("GitHubApp.requireCandidateBase")(
     (api: Api, binding: ApprovalBinding) =>
       readRef(api, binding.baseRef).pipe(
         Effect.filterOrFail(
@@ -255,7 +255,7 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
     )
       return yield* new PublishError({
         kind: "permanent",
-        message: "Publish journal does not match the approved binding",
+        message: "Publish journal does not match the validated binding",
       });
     return saved;
   });
@@ -286,7 +286,7 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
           if (pr.head.sha !== progress.commitSha || pr.base.ref !== progress.binding.baseRef)
             return yield* new PublishError({
               kind: "permanent",
-              message: `Pull request conflicts with the approved binding on ${branch}`,
+              message: `Pull request conflicts with the validated binding on ${branch}`,
             });
           return { number: pr.number, url: pr.html_url };
         }
@@ -295,7 +295,7 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
     });
     let pullRequest = yield* find();
     if (pullRequest === null) {
-      yield* requireApprovedBase(api, progress.binding);
+      yield* requireCandidateBase(api, progress.binding);
       pullRequest = yield* api("/pulls", {
         title: progress.title,
         body: progress.body,
@@ -424,7 +424,7 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
       )
         return yield* new PublishError({
           kind: "permanent",
-          message: "Patch does not match the approved candidate or has invalid paths",
+          message: "Patch does not match the validated candidate or has invalid paths",
         });
       let progress = yield* load(issue, binding, journal);
       if (progress === null) {
@@ -435,7 +435,7 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
           author: { ...options.author, date },
           message: `puchero: issue #${issue} version ${binding.version}\n\nPatch: ${binding.patchDigest}`,
           title: `Resolve #${issue} (agent v${binding.version})`,
-          body: `Closes #${issue}\n\nApproved patch: ${binding.patchDigest}\nBase: ${binding.baseRef} at ${binding.baseSha}`,
+          body: `Closes #${issue}\n\nValidated patch: ${binding.patchDigest}\nBase: ${binding.baseRef} at ${binding.baseSha}`,
           baseTree: null,
           blobs: null,
           treeSha: null,
@@ -508,7 +508,7 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
             kind: "permanent",
             message: `Published branch was removed: ${branch}`,
           });
-        yield* requireApprovedBase(api, binding);
+        yield* requireCandidateBase(api, binding);
         yield* api("/git/refs", { ref: `refs/heads/${branch}`, sha: expectedCommit }).pipe(
           Effect.catchTag("HttpFailure", (error) =>
             error.status !== 422

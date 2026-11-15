@@ -1,5 +1,6 @@
 import { createModels } from "@earendil-works/pi-ai/models";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import { Policy } from "@puchero/domain";
 import { InboxUnavailable } from "@puchero/contracts/inbox";
 import { Config, Effect, Redacted, Schema } from "effect";
 import { GitHubApp } from "./github-app.ts";
@@ -14,7 +15,7 @@ export const agentEnvironment = {
   PUCHERO_ORIGIN: Config.String("PUCHERO_ORIGIN").pipe(Config.withDefault("http://localhost:1337")),
   PUCHERO_REPO_OWNER: Config.String("PUCHERO_REPO_OWNER").pipe(Config.withDefault("")),
   PUCHERO_REPO_NAME: Config.String("PUCHERO_REPO_NAME").pipe(Config.withDefault("")),
-  PUCHERO_POLICY: Config.String("PUCHERO_POLICY").pipe(Config.withDefault("observe")),
+  PUCHERO_POLICY: Config.String("PUCHERO_POLICY").pipe(Config.withDefault("")),
   PUCHERO_DEV_TOKEN: Config.Redacted("PUCHERO_DEV_TOKEN").pipe(
     Config.withDefault(Redacted.make("")),
   ),
@@ -40,6 +41,7 @@ const decodeApprovers = Schema.decodeUnknownEffect(
 const decodeChecks = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Array(Schema.String.check(Schema.isMinLength(1)))),
 );
+const decodePolicy = Schema.decodeUnknownEffect(Policy);
 const invalid = (message: string) => new InboxUnavailable({ message });
 
 /** Missing production credentials fail closed; fake GitHub and models require an explicit development mode. */
@@ -50,7 +52,14 @@ export const readAgentSettings = Effect.fn("readAgentSettings")(function* () {
     owner: (yield* agentEnvironment.PUCHERO_REPO_OWNER) || (mode === "dev" ? "acme" : ""),
     name: (yield* agentEnvironment.PUCHERO_REPO_NAME) || (mode === "dev" ? "app" : ""),
   };
-  const policy = yield* agentEnvironment.PUCHERO_POLICY;
+  const configuredPolicy = yield* agentEnvironment.PUCHERO_POLICY;
+  const policy = yield* decodePolicy(configuredPolicy || (mode === "dev" ? "auto" : "")).pipe(
+    Effect.mapError(() =>
+      invalid(
+        "Set PUCHERO_POLICY to auto, observe or off; real-service runs require an explicit policy",
+      ),
+    ),
+  );
   const configuredInstallation = yield* agentEnvironment.GITHUB_INSTALLATION_ID;
   const installationId =
     configuredInstallation === 0 && mode === "dev" ? 42 : configuredInstallation;
@@ -61,7 +70,6 @@ export const readAgentSettings = Effect.fn("readAgentSettings")(function* () {
   ).pipe(Effect.mapError(() => invalid("PUCHERO_CHECKS must be a JSON array of commands")));
   if (
     !["dev", "production"].includes(mode) ||
-    !["off", "observe"].includes(policy) ||
     !repo.owner ||
     !repo.name ||
     !webhookSecret ||
@@ -104,7 +112,7 @@ export const readAgentSettings = Effect.fn("readAgentSettings")(function* () {
     mode,
     origin,
     repo,
-    policy: policy === "off" ? ("off" as const) : ("observe" as const),
+    policy,
     installationId,
     webhookSecret,
     checks,

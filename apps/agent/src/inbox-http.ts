@@ -12,7 +12,13 @@ import {
   type SessionFault,
   type SessionView,
 } from "@puchero/contracts/inbox";
-import { Events, type DecisionResult, type Repo, type SessionEvent } from "@puchero/domain";
+import {
+  Events,
+  type DecisionResult,
+  type Policy,
+  type Repo,
+  type SessionEvent,
+} from "@puchero/domain";
 import { InboxAuth } from "./inbox-auth.ts";
 import { InboxStore } from "./inbox-store.ts";
 import { GitHub } from "./ports.ts";
@@ -46,7 +52,7 @@ export class InboxConfig extends Context.Service<
     readonly webhookSecret: string;
     readonly repo: Repo;
     readonly installationId: number;
-    readonly policy: "off" | "observe";
+    readonly policy: Policy;
   }
 >()("puchero/InboxConfig") {}
 
