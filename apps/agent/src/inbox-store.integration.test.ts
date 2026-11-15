@@ -59,7 +59,6 @@ describe("Inbox projection", () => {
           sessionId: "acme/app#7",
           repo: { owner: "acme", name: "app" },
           issue: 7,
-          policy: "observe",
         });
         const newer = {
           ...initial,

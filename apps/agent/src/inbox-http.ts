@@ -46,7 +46,6 @@ export class InboxConfig extends Context.Service<
     readonly webhookSecret: string;
     readonly repo: Repo;
     readonly installationId: number;
-    readonly policy: "off" | "observe";
   }
 >()("puchero/InboxConfig") {}
 
@@ -112,16 +111,6 @@ const SessionRoutes = HttpApiBuilder.group(InboxApi, "sessions", (handlers) =>
           : { view, audit: audit.success };
       }),
     )
-    .handle("approve", ({ params, payload }) =>
-      act(params.sessionId, payload.requestId, "approve", (actor) =>
-        Events.Approve.make({ actor, binding: payload.binding }),
-      ),
-    )
-    .handle("reject", ({ params, payload }) =>
-      act(params.sessionId, payload.requestId, "reject", (actor) =>
-        Events.Reject.make({ actor, binding: payload.binding }),
-      ),
-    )
     .handle("cancel", ({ params, payload }) =>
       act(params.sessionId, payload.requestId, "cancel", (actor) => Events.Cancel.make({ actor })),
     )
@@ -176,7 +165,6 @@ const webhook = Effect.gen(function* () {
     return HttpServerResponse.text("Invalid webhook payload", { status: 400 });
   const payload = decoded.success;
   if (
-    config.policy === "off" ||
     payload.action !== "labeled" ||
     payload.label?.name !== "agent" ||
     payload.repository.full_name !== `${config.repo.owner}/${config.repo.name}` ||

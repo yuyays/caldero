@@ -14,7 +14,6 @@ export const agentEnvironment = {
   PUCHERO_ORIGIN: Config.String("PUCHERO_ORIGIN").pipe(Config.withDefault("http://localhost:1337")),
   PUCHERO_REPO_OWNER: Config.String("PUCHERO_REPO_OWNER").pipe(Config.withDefault("")),
   PUCHERO_REPO_NAME: Config.String("PUCHERO_REPO_NAME").pipe(Config.withDefault("")),
-  PUCHERO_POLICY: Config.String("PUCHERO_POLICY").pipe(Config.withDefault("observe")),
   PUCHERO_DEV_TOKEN: Config.Redacted("PUCHERO_DEV_TOKEN").pipe(
     Config.withDefault(Redacted.make("")),
   ),
@@ -50,7 +49,6 @@ export const readAgentSettings = Effect.fn("readAgentSettings")(function* () {
     owner: (yield* agentEnvironment.PUCHERO_REPO_OWNER) || (mode === "dev" ? "acme" : ""),
     name: (yield* agentEnvironment.PUCHERO_REPO_NAME) || (mode === "dev" ? "app" : ""),
   };
-  const policy = yield* agentEnvironment.PUCHERO_POLICY;
   const configuredInstallation = yield* agentEnvironment.GITHUB_INSTALLATION_ID;
   const installationId =
     configuredInstallation === 0 && mode === "dev" ? 42 : configuredInstallation;
@@ -61,7 +59,6 @@ export const readAgentSettings = Effect.fn("readAgentSettings")(function* () {
   ).pipe(Effect.mapError(() => invalid("PUCHERO_CHECKS must be a JSON array of commands")));
   if (
     !["dev", "production"].includes(mode) ||
-    !["off", "observe"].includes(policy) ||
     !repo.owner ||
     !repo.name ||
     !webhookSecret ||
@@ -70,7 +67,7 @@ export const readAgentSettings = Effect.fn("readAgentSettings")(function* () {
     installationId <= 0
   )
     return yield* invalid(
-      "Configure the agent mode, repository, policy, webhook secret, installation and validation checks",
+      "Configure the agent mode, repository, webhook secret, installation and validation checks",
     );
   const parsedOrigin = yield* Effect.try({
     try: () => new URL(origin),
@@ -104,7 +101,6 @@ export const readAgentSettings = Effect.fn("readAgentSettings")(function* () {
     mode,
     origin,
     repo,
-    policy: policy === "off" ? ("off" as const) : ("observe" as const),
     installationId,
     webhookSecret,
     checks,

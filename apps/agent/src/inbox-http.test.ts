@@ -6,7 +6,7 @@ import {
   SessionFault,
   summarizeSession,
 } from "@puchero/contracts/inbox";
-import { decide, Events, initialSession } from "@puchero/domain";
+import { decide, initialSession } from "@puchero/domain";
 import { Effect, Fiber, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import { HttpApiClient } from "effect/http-api";
@@ -37,12 +37,15 @@ const setup = Effect.fn("setupInboxHttp")(function* (
   options: {
     hold?: Promise<void>;
     onAdmission?: () => void;
-    policy?: "off" | "observe";
     failure?: "hydration" | "admission" | "audit" | "permanent";
     unavailableReason?: "temporary" | "overloaded" | "unknown";
   } = {},
 ) {
-  let state = initialSession({ sessionId: id, repo, issue: 7, policy: "observe" });
+  let state = initialSession({
+    sessionId: id,
+    repo,
+    issue: 7,
+  });
   let exists = false;
   let starts = 0;
   let admissionContext = "";
@@ -61,7 +64,6 @@ const setup = Effect.fn("setupInboxHttp")(function* (
       webhookSecret: secret,
       repo,
       installationId: 42,
-      policy: options.policy ?? "observe",
     }),
     Layer.succeed(InboxStore, {
       list: () => Effect.succeed(exists ? [summarizeSession(state)] : []),
@@ -160,16 +162,10 @@ const setup = Effect.fn("setupInboxHttp")(function* (
   };
   const webhook = (data = payload, signature?: string) =>
     signedBody(JSON.stringify(data), signature);
-  const propose = () => {
-    apply(Events.RunAnswered.make({ runId: 1 }));
-    apply(Events.Validated.make({ runId: 1, patchDigest: patch.digest, evidence: "tests passed" }));
-    return state.candidate!.binding;
-  };
   return {
     send,
     webhook,
     signedBody,
-    propose,
     view,
     starts: () => starts,
     admissionContext: () => admissionContext,
@@ -232,7 +228,6 @@ describe("Inbox HTTP", () => {
     Effect.gen(function* () {
       const api = yield* setup({ failure: "audit" });
       yield* api.webhook();
-      const binding = api.propose();
       const headers = {
         authorization: "Bearer local-token",
         origin,
@@ -242,7 +237,7 @@ describe("Inbox HTTP", () => {
       const detail = yield* api.send(path, { headers });
       expect(detail.status).toBe(200);
       expect(yield* Effect.promise(() => detail.json())).toMatchObject({
-        view: { state: { candidate: { binding } } },
+        view: { state: { status: "running" } },
         audit: [],
         auditUnavailable: true,
       });
@@ -321,42 +316,29 @@ describe("Inbox HTTP", () => {
           expect((yield* api.webhook(unrelated)).status).toBe(204);
         }
         expect(api.starts()).toBe(1);
-        const off = yield* setup({ policy: "off" });
-        expect((yield* off.webhook()).status).toBe(204);
-        expect(off.starts()).toBe(0);
       }),
   );
 
   it.effect(
-    "derives the approval actor from auth, returns stale candidates as 409, and serves the typed client",
+    "derives the stop actor from auth, deduplicates requests, and serves the typed client",
     () =>
       Effect.gen(function* () {
         const api = yield* setup();
         yield* api.webhook();
-        const binding = api.propose();
         const headers = {
           authorization: "Bearer local-token",
           origin,
           "content-type": "application/json",
         };
-        const path = `/api/sessions/${encodeURIComponent(id)}/approve`;
-        const stale = yield* api.send(path, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ binding: { ...binding, patchDigest: "old" }, requestId: "stale" }),
-        });
-        expect(stale.status).toBe(409);
-        expect(yield* Effect.promise(() => stale.json())).toMatchObject({
-          view: { state: { candidate: { binding } } },
-        });
-        const approve = () =>
+        const path = `/api/sessions/${encodeURIComponent(id)}/cancel`;
+        const stop = () =>
           api.send(path, {
             method: "POST",
             headers,
-            body: JSON.stringify({ binding, requestId: "approve-1", actor: "eve" }),
+            body: JSON.stringify({ requestId: "stop-1", actor: "eve" }),
           });
-        expect((yield* approve()).status).toBe(200);
-        expect((yield* approve()).status).toBe(200);
+        expect((yield* stop()).status).toBe(200);
+        expect((yield* stop()).status).toBe(200);
         expect(api.view().state.decidedBy).toBe("ann");
         const summaries = yield* Effect.gen(function* () {
           const client = yield* HttpApiClient.make(InboxApi, { baseUrl: origin });
@@ -369,7 +351,7 @@ describe("Inbox HTTP", () => {
             return api.handler(request);
           }),
         );
-        expect(summaries[0]).toMatchObject({ sessionId: id, status: "publishing" });
+        expect(summaries[0]).toMatchObject({ sessionId: id, status: "cancelled" });
         expect(summaries[0]).not.toHaveProperty("patch");
       }),
   );
@@ -378,10 +360,9 @@ describe("Inbox HTTP", () => {
     Effect.gen(function* () {
       const api = yield* setup();
       yield* api.webhook();
-      const binding = api.propose();
       expect((yield* api.send("/api/sessions")).status).toBe(401);
-      const path = `/api/sessions/${encodeURIComponent(id)}/approve`;
-      const body = JSON.stringify({ binding, requestId: "one" });
+      const path = `/api/sessions/${encodeURIComponent(id)}/cancel`;
+      const body = JSON.stringify({ requestId: "one" });
       expect(
         (yield* api.send(path, {
           method: "POST",
@@ -400,7 +381,7 @@ describe("Inbox HTTP", () => {
           headers: { authorization: "Bearer local-token", origin, "content-type": "text/plain" },
         })).status,
       ).toBe(415);
-      expect(api.view().state.status).toBe("awaitingApproval");
+      expect(api.view().state.status).toBe("running");
       expect((yield* api.send("/s/demo/deliver", { method: "POST", body })).status).toBe(404);
     }),
   );

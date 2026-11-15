@@ -29,10 +29,10 @@ console.log(response.status);
 JS
 ```
 
-The session reaches `awaitingApproval` after writing and checking `notes.txt`. The inbox shows its diff, digest,
-base, version and validation evidence. Approve opens a fake PR. Repeating the delivery ID does not change the
-session. Reject/Stop ask for confirmation; sending instructions while awaiting approval explicitly replaces the
-candidate. A stale decision returns HTTP 409 with the fresh session; the page displays it before another decision.
+A new local session writes and checks `notes.txt`, then opens a fake PR automatically. The inbox shows its diff,
+digest, base, version and validation evidence. Repeating the delivery ID does not change the session. Stop asks
+for confirmation and is available before publication starts. New instructions steer work; in a legacy paused
+session they explicitly replace the old candidate with a fresh run.
 The unauthenticated `/s/:name/deliver` development route has been removed.
 
 `pnpm dev:web` supports frontend editing on port 5173, proxying `/api` to the agent on 1337. Set
@@ -48,7 +48,6 @@ an explicit binding and marks credentials redacted. Keep secrets out of git and 
 | ----------------------------------------- | ------------------------------------------------------------------------------- |
 | `PUCHERO_ORIGIN`                          | Exact HTTPS inbox origin, no trailing slash                                     |
 | `PUCHERO_REPO_OWNER`, `PUCHERO_REPO_NAME` | One configured repository                                                       |
-| `PUCHERO_POLICY`                          | `observe` (default) or `off`                                                    |
 | `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID` | Installed GitHub App identity                                                   |
 | `GITHUB_PRIVATE_KEY`                      | Secret PEM App key                                                              |
 | `GITHUB_WEBHOOK_SECRET`                   | Secret matching GitHub's webhook configuration                                  |
@@ -77,7 +76,7 @@ with no Access configuration. Missing production authentication, webhook or App/
 
 Session detail degrades independently: a failed audit read returns an empty activity list with an unavailable flag,
 and a missing/corrupt patch blob returns the authoritative state with a patch-unavailable flag. The UI explains
-these failures and allows stopping the session; it never enables approval without the displayed frozen patch.
+these failures and keeps Stop available in eligible pre-publication states.
 
 D1 migrations live in `migrations/`. D1 stores bounded summaries and revision activity, never file contents or
 validation output. `Project` carries its committed revision's immutable snapshot, so retries cannot relabel a newer
@@ -100,10 +99,10 @@ checkpoint crash windows. No test or dev command deploys Cloudflare resources.
 `GitHubApp.layer` / `GitHubApp.make` in `src/github-app.ts` implements the GitHub seam. Configure one repository,
 App ID, installation ID, PEM private key, and commit author. Installation tokens are minted per operation with
 repository-scoped Contents, Pull requests and Issues write permissions. Keep the private key in the host; the adapter
-returns file bytes, never credentials, to `Workspace`. Explicit local mode uses FakeGitHub; production connects this adapter to verified admission and the review API.
+returns file bytes, never credentials, to `Workspace`. Explicit local mode uses FakeGitHub; production connects this adapter to verified admission and the session API.
 
 `fetchIssueContext` returns the issue, paginated comments, root `AGENTS.md`, default branch name and its captured
-commit. Pass these into `IssueLabeled`. Approvals now include `baseRef`; previously saved development sessions without
+commit. Pass these into `IssueLabeled`. Candidate bindings include `baseRef`; previously saved development sessions without
 that field are incompatible and must use a fresh session name. Source fetches use the Git tree/blob APIs with bounded
 concurrency; truncated trees, symlinks and submodules fail explicitly. Tarball streaming remains future work.
 
@@ -111,8 +110,8 @@ Publishing requires a `PublishJournal`. SessionHost supplies a Pi document with 
 The adapter freezes commit metadata before calling GitHub and stores each stage's receipt before advancing. It never
 force-updates a branch. An ambiguous result is reconciled against the expected commit and open **or closed** PRs;
 an expected branch with no PR finishes only the PR stage. A moved base branch ends the session as `failed`; there is
-no restart transition for failed sessions in milestone 1. Start a fresh session from updated context and approve its
-new candidate. The adapter checks the base before creating a branch and again before opening a missing PR. A base
+no restart transition for failed sessions in milestone 1. Start a fresh session from updated context; its new
+candidate must pass validation before publication. The adapter checks the base before creating a branch and again before opening a missing PR. A base
 that moves between those checks may still leave an unused branch; the adapter never deletes or overwrites it.
 
 ### Live scratch contract check (opt-in)
@@ -139,3 +138,18 @@ pnpm exec vp test run apps/agent/src/github-app.contract.integration.test.ts
 The App must be installed on that repository with Contents, Pull requests and Issues write permissions. Reuse the
 journal file to re-check the same publication after a restart; use a new filename for a separate check. The SDK
 also accepts `apiUrl` for GitHub Enterprise or a local contract peer; no credentials are copied into the workspace.
+
+## Automatic publication
+
+Every new session opens its PR automatically after the configured `PUCHERO_CHECKS` pass in the sandbox. There is
+no approval-mode setting or approve/reject action. The model cannot declare validation successful; only the
+workspace validation outcome starts publication. GitHub CI can run after the PR opens. Review and merging happen
+on GitHub; Puchero never merges automatically.
+
+Stop works before publication begins. Once publishing starts, its remote outcome may already have landed.
+Historical state fields remain readable without rewriting stored documents or task journals. A legacy session
+paused in `awaitingApproval` stays paused until new instructions create a fresh run, or Stop cancels it. Its old
+candidate is never published merely by upgrading. An already running legacy session publishes its next successfully
+validated candidate automatically. `PUCHERO_POLICY` has been removed and any old environment value is ignored.
+See [automatic PR design](../../docs/design/automatic-pr.md) for acceptance criteria and rollback compatibility.
+Existing GitHub App permissions remain sufficient; no additional scopes are requested.

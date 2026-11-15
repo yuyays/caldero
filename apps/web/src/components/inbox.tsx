@@ -20,7 +20,7 @@ export const statusLabel: Record<SessionSummary["status"], string> = {
   idle: "Waiting to start",
   running: "Working",
   validating: "Checking changes",
-  awaitingApproval: "Needs review",
+  awaitingApproval: "Paused from an earlier version",
   publishing: "Opening pull request",
   published: "Pull request opened",
   rejected: "Rejected",
@@ -45,9 +45,9 @@ export function Inbox() {
       <header className="mb-8 flex flex-wrap items-center justify-between gap-4 border-b border-stone-300 pb-6">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
-            Puchero <span className="font-normal text-stone-600">/ Review inbox</span>
+            Puchero <span className="font-normal text-stone-600">/ Agent inbox</span>
           </h1>
-          <p className="mt-2 text-sm text-stone-600">Agent work, ready for your decision.</p>
+          <p className="mt-2 text-sm text-stone-600">Autonomous agent work and pull requests.</p>
         </div>
         <div className="flex items-center gap-4 text-sm">
           <span>{viewer.data ? `Reviewing as ${viewer.data.login}` : "Sign-in required"}</span>
@@ -139,10 +139,10 @@ export function Inbox() {
         ) : (
           <section className="flex min-h-80 flex-col items-center justify-center border-y border-stone-200 px-6 text-center">
             <GitPullRequest className="mb-4 text-stone-500" size={28} aria-hidden="true" />
-            <h2 className="text-xl font-medium">A place to review agent work</h2>
+            <h2 className="text-xl font-medium">A place to follow agent work</h2>
             <p className="mt-2 max-w-md text-sm leading-6 text-stone-600">
-              When an agent finishes its checks, select the session to inspect its changes and
-              decide whether to open a pull request.
+              Select a session to inspect its changes, check results and pull request. The agent
+              opens a pull request when its checks pass.
             </p>
           </section>
         )}
@@ -184,7 +184,7 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
           auditUnavailable: old?.auditUnavailable ?? false,
         }));
         setNotice(
-          "The candidate changed. Review the current patch and evidence before deciding again.",
+          "The session changed. Check its current progress before sending another request.",
         );
         setConfirm(null);
       } else setNotice(inboxError(error));
@@ -206,11 +206,6 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
   const { state, patch } = view;
   const candidate = state.candidate;
   const blocked = decision.isPending || detail.isFetching || sessionFault(decision.error);
-  const reviewable =
-    state.status === "awaitingApproval" &&
-    candidate !== null &&
-    patch !== null &&
-    candidate.binding.patchDigest === patch.digest;
   const cancellable = ["idle", "running", "validating", "awaitingApproval"].includes(state.status);
   const canInput = ["running", "validating", "awaitingApproval", "publishing"].includes(
     state.status,
@@ -234,9 +229,7 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
             <ExternalLink size={14} aria-hidden="true" />
           </a>
         </div>
-        <span
-          className={`rounded-md px-3 py-2 text-sm font-medium ${reviewable ? "bg-cyan-100 text-cyan-950" : "bg-stone-100 text-stone-800"}`}
-        >
+        <span className="rounded-md bg-stone-100 px-3 py-2 text-sm font-medium text-stone-800">
           {statusLabel[state.status]}
         </span>
       </div>
@@ -247,7 +240,8 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
       </div>
       {auditUnavailable && (
         <p className="mt-4 text-sm text-amber-900">
-          Activity history is unavailable. You can still review and decide on this session.
+          Activity history is unavailable. Current progress and eligible session controls remain
+          available.
         </p>
       )}
       {state.failure && (
@@ -317,7 +311,7 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
         ) : (
           <p className="rounded-xl bg-stone-100 p-5 text-sm leading-6 text-stone-600">
             {view.patchUnavailable
-              ? "The validated patch could not be loaded. Refresh to retry. Approval is disabled; you can still stop this session."
+              ? "The validated patch could not be loaded. Refresh to retry."
               : state.status === "running" || state.status === "validating"
                 ? "The agent is still working. Changes and check results appear here when a candidate is ready."
                 : "No validated patch is available for this session."}
@@ -326,21 +320,11 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
       </section>
       <section className="my-6 border-y border-stone-300 py-5" aria-label="Review actions">
         <p className="mb-4 text-sm text-stone-600">
-          Approving opens a pull request with the exact candidate shown above.
+          {state.status === "awaitingApproval"
+            ? "This session was paused by an earlier version. Send new instructions to create a fresh candidate, or stop it. The old candidate will not be published."
+            : "The agent opens a pull request when its checks pass. Review and merge it on GitHub."}
         </p>
         <div className="flex flex-wrap gap-3">
-          <Button disabled={!reviewable || blocked} onClick={() => act("approve")}>
-            {decision.isPending && decision.variables.action === "approve"
-              ? "Approving…"
-              : "Approve & open PR"}
-          </Button>
-          <Button
-            variant="outline"
-            disabled={!reviewable || blocked}
-            onClick={() => setConfirm("reject")}
-          >
-            Reject candidate
-          </Button>
           <Button
             variant="outline"
             disabled={!cancellable || blocked}
@@ -349,15 +333,11 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
             Stop session
           </Button>
         </div>
-        {(confirm === "reject" || confirm === "cancel") && (
+        {confirm === "cancel" && (
           <div className="mt-4 space-y-3">
-            <p className="text-sm">
-              {confirm === "reject"
-                ? "Reject this candidate? It will not be published."
-                : "Stop this session and discard its pending work?"}
-            </p>
+            <p className="text-sm">Stop this session and discard its pending work?</p>
             <Button disabled={blocked} onClick={() => act(confirm)}>
-              Confirm {confirm === "reject" ? "rejection" : "stop"}
+              Confirm stop
             </Button>
             <Button
               className="ml-2"
@@ -365,7 +345,7 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
               disabled={blocked}
               onClick={() => setConfirm(null)}
             >
-              Keep reviewing
+              Keep working
             </Button>
           </div>
         )}
@@ -402,7 +382,7 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
           {confirm === "input" && (
             <p role="alert" className="my-3 text-sm text-amber-900">
               Sending this replaces version {state.version}. The agent will create a new candidate
-              for you to review.
+              and open a PR after checks pass.
             </p>
           )}
           <Button

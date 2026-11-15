@@ -161,7 +161,7 @@ export const makeGitWorkspace = Effect.fn("makeGitWorkspace")(function* (options
     const patch = Patch.make({ digest: yield* digestOf(files), diff, files });
     if (files.length === 0) return { passed: false, patch, evidence: "The run changed no files." };
 
-    // Checks run against a frozen copy, so later edits cannot change what they approved.
+    // Checks run against a frozen copy, so later edits cannot change what was validated.
     const frozen = `${root}/candidates/${patch.digest}`;
     yield* exec(["rm", "-rf", frozen], root);
     yield* git(["checkout-index", "-a", "-f", `--prefix=${frozen}/`]);

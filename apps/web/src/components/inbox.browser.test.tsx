@@ -20,8 +20,8 @@ const view: SessionView = {
     sessionId: "acme/app#7",
     repo: binding.repo,
     issue: 7,
-    policy: "observe",
-    status: "awaitingApproval",
+    policy: "auto",
+    status: "validating",
     revision: 3,
     runId: 1,
     version: 1,
@@ -62,6 +62,27 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("Candidate review", () => {
+  it("identifies automatic publication and links the opened PR without asking for approval", () => {
+    const automatic: SessionView = {
+      ...view,
+      state: {
+        ...view.state,
+        policy: "auto",
+        status: "published",
+        pullRequest: { number: 123, url: "https://github.com/acme/app/pull/123" },
+      },
+    };
+    const cache = mount(automatic);
+    expect(screen.getByText(/24 tests passed/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open pull request #123" })).toHaveProperty(
+      "href",
+      "https://github.com/acme/app/pull/123",
+    );
+    expect(screen.queryByRole("button", { name: "Approve & open PR" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reject candidate" })).toBeNull();
+    cache.clear();
+  });
+
   it("explains permanent session faults without offering another retry or allowing another decision", async () => {
     const fetcher = vi.fn<typeof fetch>(() =>
       Promise.resolve(
@@ -72,12 +93,10 @@ describe("Candidate review", () => {
     );
     vi.stubGlobal("fetch", fetcher);
     const cache = mount();
-    await userEvent.click(screen.getByRole("button", { name: "Approve & open PR" }));
+    await userEvent.click(screen.getByRole("button", { name: "Stop session" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirm stop" }));
     await waitFor(() => expect(screen.getByText(/Operator repair is required/)).toBeTruthy());
-    expect(screen.getByRole("button", { name: "Approve & open PR" })).toHaveProperty(
-      "disabled",
-      true,
-    );
+    expect(screen.getByRole("button", { name: "Stop session" })).toHaveProperty("disabled", true);
     await cache.invalidateQueries({ queryKey: ["session", binding.sessionId] });
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toContain("retrying will not fix it"),
@@ -86,7 +105,7 @@ describe("Candidate review", () => {
     cache.clear();
   });
 
-  it("disables approval for a missing patch while preserving stop controls and explaining audit failure", async () => {
+  it("keeps stop controls available with missing patch and audit data", async () => {
     const missing = { ...view, patch: null, patchUnavailable: true };
     const stopped = { ...missing, state: { ...missing.state, status: "cancelled" } };
     const fetcher = vi.fn<typeof fetch>((_request, init) =>
@@ -100,10 +119,6 @@ describe("Candidate review", () => {
     );
     vi.stubGlobal("fetch", fetcher);
     const cache = mount(missing, true);
-    expect(screen.getByRole("button", { name: "Approve & open PR" })).toHaveProperty(
-      "disabled",
-      true,
-    );
     expect(screen.getByRole("button", { name: "Stop session" })).toHaveProperty("disabled", false);
     expect(screen.getByText(/validated patch could not be loaded/)).toBeTruthy();
     expect(screen.getByText(/Activity history is unavailable/)).toBeTruthy();
@@ -113,77 +128,15 @@ describe("Candidate review", () => {
     cache.clear();
   });
 
-  it("sends the displayed binding once and blocks duplicate clicks while approval is pending", async () => {
-    let complete: (response: Response) => void = () => {};
-    const fetcher = vi.fn<typeof fetch>(
-      () =>
-        new Promise<Response>((resolve) => {
-          complete = resolve;
-        }),
-    );
-    vi.stubGlobal("fetch", fetcher);
-    const cache = mount();
-    expect(screen.getByText(/24 tests passed/)).toBeTruthy();
-    expect(screen.getByLabelText("Proposed diff").textContent).toContain(
-      "Write down the next step.",
-    );
-    await userEvent.click(screen.getByRole("button", { name: "Approve & open PR" }));
-    await userEvent.click(screen.getByRole("button", { name: "Approving…" }));
-    expect(fetcher).toHaveBeenCalledOnce();
-    const init = fetcher.mock.calls[0]?.[1];
-    expect(await new Response(init?.body).json()).toMatchObject({ binding });
-    complete(
-      Response.json({
-        result: "applied",
-        view: { ...view, state: { ...view.state, status: "publishing" } },
-      }),
-    );
-    await waitFor(() => expect(screen.getByText("Opening pull request")).toBeTruthy());
-    cache.clear();
-  });
-  it("shows the fresh candidate after a stale decision and requires a new click with the new binding", async () => {
-    const newer = {
-      ...view,
-      state: {
-        ...view.state,
-        version: 2,
-        candidate: {
-          binding: { ...binding, version: 2, patchDigest: "digest-v2" },
-          evidence: "New checks passed",
-        },
-      },
-      patch: { ...view.patch!, digest: "digest-v2", diff: "+Updated candidate\n" },
-    };
-    const fetcher = vi.fn<typeof fetch>((_request, init) =>
-      Promise.resolve(
-        init?.method === "POST"
-          ? Response.json(
-              { _tag: "StaleDecision", message: "Changed", view: newer },
-              { status: 409 },
-            )
-          : Response.json({ view: newer, audit: [] }),
-      ),
-    );
-    vi.stubGlobal("fetch", fetcher);
-    const cache = mount();
-    await userEvent.click(screen.getByRole("button", { name: "Approve & open PR" }));
-    await waitFor(() => expect(screen.getByText("digest-v2")).toBeTruthy());
-    expect(screen.getByText(/The candidate changed/)).toBeTruthy();
-    expect(screen.getByLabelText("Proposed diff").textContent).toContain("Updated candidate");
-    expect(fetcher.mock.calls.filter((call) => call[1]?.method === "POST")).toHaveLength(1);
-    await userEvent.click(screen.getByRole("button", { name: "Approve & open PR" }));
-    const posts = fetcher.mock.calls.filter((call) => call[1]?.method === "POST");
-    expect(await new Response(posts[1]?.[1]?.body).json()).toMatchObject({
-      binding: newer.state.candidate.binding,
-    });
-    cache.clear();
-  });
-  it("warns before additional instructions replace the reviewed candidate", async () => {
+  it("warns before restarting a legacy paused candidate with new instructions", async () => {
     const fetcher = vi.fn<typeof fetch>(() =>
       Promise.resolve(Response.json({ result: "applied", view })),
     );
     vi.stubGlobal("fetch", fetcher);
-    const cache = mount();
+    const cache = mount({
+      ...view,
+      state: { ...view.state, policy: "observe", status: "awaitingApproval" },
+    });
     await userEvent.type(screen.getByLabelText("Send instructions"), "Include a test");
     await userEvent.click(screen.getByRole("button", { name: "Send instructions" }));
     expect(fetcher).not.toHaveBeenCalled();

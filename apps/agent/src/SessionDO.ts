@@ -104,7 +104,6 @@ const implementation = Effect.gen(function* () {
               sessionId: `${settings.repo.owner}/${settings.repo.name}#${issue}`,
               repo: settings.repo,
               issue,
-              policy: settings.policy,
             },
             models: runtime.models,
             model: runtime.model,
@@ -154,7 +153,6 @@ const implementation = Effect.gen(function* () {
             event: SessionEvent,
             eventId: string,
           ) {
-            if (settings.policy === "off") return;
             const current = yield* sessions.open(issue);
             if (current === undefined) return;
             yield* current.deliver(event, eventId);

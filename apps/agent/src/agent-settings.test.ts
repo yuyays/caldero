@@ -25,6 +25,11 @@ describe("Agent configuration", () => {
           installationId: 123,
           checks: ["pnpm test"],
         });
+        expect(yield* settings({ ...production, PUCHERO_POLICY: "off" })).toMatchObject({
+          repo: { owner: "team", name: "product" },
+          installationId: 123,
+          checks: ["pnpm test"],
+        });
         for (const key of [
           "PUCHERO_REPO_OWNER",
           "PUCHERO_REPO_NAME",
@@ -53,7 +58,9 @@ describe("Agent configuration", () => {
           PUCHERO_DEV_TOKEN: "local",
           GITHUB_WEBHOOK_SECRET: "fixture-secret",
         };
-        expect((yield* settings(local)).auth).toMatchObject({ mode: "dev", token: "local" });
+        expect(yield* settings(local)).toMatchObject({
+          auth: { mode: "dev", token: "local" },
+        });
         for (const env of [
           {},
           { ...local, PUCHERO_MODE: "production", PUCHERO_ORIGIN: "https://inbox.example.com" },
