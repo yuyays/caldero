@@ -1,0 +1,520 @@
+import { generateKeyPairSync, verify } from "node:crypto";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, Exit } from "effect";
+import { GitHubApp } from "./github-app.ts";
+import { type Patch, type PublishProgress, type PublishJournal } from "./ports.ts";
+
+const repo = { owner: "acme", name: "app" };
+const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const privateKey = keys.privateKey.export({ type: "pkcs8", format: "pem" });
+const binding = {
+  sessionId: "acme/app#7",
+  version: 1,
+  runId: 1,
+  repo,
+  baseSha: "base-1",
+  baseRef: "main",
+  patchDigest: "sha256:patch",
+};
+const patch: Patch = {
+  digest: binding.patchDigest,
+  diff: "binary and modes",
+  files: [
+    { path: "old.txt", change: "delete" },
+    { path: "logo.bin", change: "write", content: "AP8B/g==", executable: false },
+    { path: "bin/run", change: "write", content: "IyEvYmluL3NoCg==", executable: true },
+  ],
+};
+
+const memoryJournal = () => {
+  let value: PublishProgress | null = null;
+  const journal: PublishJournal = {
+    read: () => Effect.succeed(value),
+    save: (progress) =>
+      Effect.sync(() => {
+        value = progress;
+      }),
+  };
+  return { journal, value: () => value };
+};
+
+/** A real HTTP peer; only GitHub is simulated, not the adapter's transport or auth. */
+const peer = (handle: (request: IncomingMessage, response: ServerResponse) => void) =>
+  Effect.acquireRelease(
+    Effect.promise(
+      () =>
+        new Promise<{ server: ReturnType<typeof createServer>; url: string }>((resolve) => {
+          const server = createServer(handle);
+          server.listen(0, "127.0.0.1", () => {
+            const address = server.address();
+            if (address === null || typeof address === "string") throw new Error("No TCP port");
+            resolve({ server, url: `http://127.0.0.1:${address.port}` });
+          });
+        }),
+    ),
+    ({ server }) =>
+      Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
+  );
+
+const json = (response: ServerResponse, value: unknown, status = 200) => {
+  response.writeHead(status, { "Content-Type": "application/json" });
+  response.end(JSON.stringify(value));
+};
+
+/** GitHub's publication protocol, with remote state independent of the client's journal. */
+const publisherPeer = () =>
+  Effect.gen(function* () {
+    const posts: Array<{ path: string; body: unknown }> = [];
+    let branch: string | null = null;
+    let pr: {
+      number: number;
+      html_url: string;
+      head: { sha: string; ref: string };
+      base: { ref: string };
+    } | null = null;
+    let drop: string | null = null;
+    let raceRef: string | null = null;
+    let racePr = false;
+    let base = "base-1";
+    const http = yield* peer((request, response) => {
+      const path = request.url ?? "";
+      if (request.method === "POST") {
+        let body = "";
+        request.on("data", (chunk) => {
+          body += String(chunk);
+        });
+        request.on("end", () => {
+          const data: unknown = JSON.parse(body);
+          posts.push({ path, body: data });
+          const reply = (value: unknown, status = 201) => {
+            if (drop === path) {
+              drop = null;
+              response.destroy();
+            } else json(response, value, status);
+          };
+          if (path === "/app/installations/42/access_tokens")
+            json(response, { token: "token" }, 201);
+          else if (path.endsWith("/git/blobs"))
+            reply({
+              sha:
+                typeof data === "object" &&
+                data !== null &&
+                "content" in data &&
+                data.content === "AP8B/g=="
+                  ? "binary-blob"
+                  : "script-blob",
+            });
+          else if (path.endsWith("/git/trees")) reply({ sha: "new-tree" });
+          else if (path.endsWith("/git/commits")) reply({ sha: "new-commit" });
+          else if (path.endsWith("/git/refs")) {
+            if (raceRef !== null) {
+              branch = raceRef;
+              raceRef = null;
+            }
+            if (branch !== null) json(response, { message: "Reference already exists" }, 422);
+            else {
+              branch = "new-commit";
+              reply({ object: { sha: branch } });
+            }
+          } else if (path === "/repos/acme/app/pulls") {
+            if (racePr) {
+              pr = {
+                number: 101,
+                html_url: "https://github.test/acme/app/pull/101",
+                head: { sha: "new-commit", ref: "puchero/7-v1" },
+                base: { ref: "main" },
+              };
+              racePr = false;
+            }
+            if (pr !== null) json(response, { message: "PR already exists" }, 422);
+            else {
+              pr = {
+                number: 101,
+                html_url: "https://github.test/acme/app/pull/101",
+                head: { sha: "new-commit", ref: "puchero/7-v1" },
+                base: { ref: "main" },
+              };
+              reply(pr);
+            }
+          } else json(response, {}, 404);
+        });
+      } else if (path === "/repos/acme/app/git/commits/base-1")
+        json(response, { sha: "base-1", tree: { sha: "base-tree" } });
+      else if (path === "/repos/acme/app/git/ref/heads/main")
+        json(response, { object: { sha: base } });
+      else if (path.startsWith("/repos/acme/app/git/ref/heads/")) {
+        if (branch === null) json(response, {}, 404);
+        else json(response, { object: { sha: branch } });
+      } else if (path.startsWith("/repos/acme/app/pulls?")) json(response, pr === null ? [] : [pr]);
+      else json(response, {}, 404);
+    });
+    return {
+      ...http,
+      posts,
+      branch: () => branch,
+      pr: () => pr,
+      setBranch: (sha: string) => {
+        branch = sha;
+      },
+      setBase: (sha: string) => {
+        base = sha;
+      },
+      dropAfter: (path: string) => {
+        drop = path;
+      },
+      raceRef: (sha: string) => {
+        raceRef = sha;
+      },
+      racePr: () => {
+        racePr = true;
+      },
+    };
+  });
+
+const adapter = (apiUrl: string) =>
+  GitHubApp.make({
+    appId: "123",
+    installationId: 42,
+    privateKey,
+    repo,
+    apiUrl,
+    author: { name: "puchero", email: "bot@example.com" },
+  });
+
+describe("GitHubApp", () => {
+  for (const tree of [
+    { truncated: true, tree: [] },
+    { truncated: false, tree: [{ path: "link", mode: "120000", type: "blob", sha: "symlink" }] },
+    {
+      truncated: false,
+      tree: [{ path: "vendor", mode: "160000", type: "commit", sha: "submodule" }],
+    },
+  ]) {
+    it.effect(`refuses incomplete or unsupported source trees: ${JSON.stringify(tree)}`, () =>
+      Effect.gen(function* () {
+        const http = yield* peer((request, response) => {
+          if (request.url === "/app/installations/42/access_tokens")
+            json(response, { token: "token" }, 201);
+          else if (request.url === "/repos/acme/app/git/commits/base-1")
+            json(response, { sha: "base-1", tree: { sha: "tree" } });
+          else json(response, tree);
+        });
+        const github = yield* adapter(http.url);
+        expect(yield* github.fetchSource(repo, "base-1").pipe(Effect.flip)).toMatchObject({
+          _tag: "GitHubError",
+        });
+      }),
+    );
+  }
+
+  it.effect("does not send a token or request outside its configured repository", () =>
+    Effect.gen(function* () {
+      const calls: Array<string> = [];
+      const http = yield* peer((request, response) => {
+        calls.push(request.url ?? "");
+        json(response, {}, 403);
+      });
+      const github = yield* adapter(http.url);
+      expect(
+        yield* github.fetchSource({ owner: "another", name: "repo" }, "base-1").pipe(Effect.flip),
+      ).toMatchObject({ message: "Repository is outside the configured installation scope" });
+      expect(calls).toEqual([]);
+    }),
+  );
+
+  it.effect("deduplicates a comment after GitHub stored it but its response was lost", () =>
+    Effect.gen(function* () {
+      const posted: Array<{ body: string }> = [];
+      const http = yield* peer((request, response) => {
+        if (request.url === "/app/installations/42/access_tokens")
+          json(response, { token: "token" }, 201);
+        else if (request.method === "GET") json(response, posted);
+        else {
+          let body = "";
+          request.on("data", (chunk) => {
+            body += String(chunk);
+          });
+          request.on("end", () => {
+            posted.push(JSON.parse(body));
+            response.destroy();
+          });
+        }
+      });
+      const github = yield* adapter(http.url);
+      yield* github.comment(repo, 7, "published:v1", "Opened PR").pipe(Effect.flip);
+      yield* github.comment(repo, 7, "published:v1", "Opened PR");
+      expect(posted).toEqual([{ body: "Opened PR\n\n<!-- puchero:cHVibGlzaGVkOnYx -->" }]);
+    }),
+  );
+  for (const stage of ["blobs", "trees", "commits", "refs", "pulls"]) {
+    it.effect(
+      `recovers a lost ${stage} response without duplicating the PR or changing commit metadata`,
+      () =>
+        Effect.gen(function* () {
+          const http = yield* publisherPeer();
+          http.dropAfter(`/repos/acme/app/${stage === "pulls" ? stage : `git/${stage}`}`);
+          const { journal } = memoryJournal();
+          const first = yield* adapter(http.url);
+          expect(yield* first.publish(7, binding, patch, journal).pipe(Effect.flip)).toMatchObject({
+            kind: "ambiguous",
+          });
+          const next = yield* adapter(http.url);
+          const result = yield* next.reconcile(7, binding, journal);
+          const pr =
+            result.found === "pullRequest"
+              ? result.pullRequest
+              : yield* next.publish(7, binding, patch, journal);
+          expect(pr.number).toBe(101);
+          expect(http.posts.filter((post) => post.path === "/repos/acme/app/pulls")).toHaveLength(
+            1,
+          );
+          const commits = http.posts.filter((post) => post.path.endsWith("/git/commits"));
+          expect(
+            commits.every((post) => JSON.stringify(post.body) === JSON.stringify(commits[0]?.body)),
+          ).toBe(true);
+        }),
+    );
+  }
+
+  for (const crashAfterSave of [1, 2, 3, 4, 5, 6, 7]) {
+    it.effect(
+      `resumes from durable receipt ${crashAfterSave} after the publishing process dies`,
+      () =>
+        Effect.gen(function* () {
+          const http = yield* publisherPeer();
+          const saved = memoryJournal();
+          let saves = 0;
+          const journal: PublishJournal = {
+            read: saved.journal.read,
+            save: (progress) =>
+              saved.journal
+                .save(progress)
+                .pipe(
+                  Effect.andThen(
+                    Effect.suspend(() =>
+                      ++saves === crashAfterSave
+                        ? Effect.die(new Error("Process died"))
+                        : Effect.void,
+                    ),
+                  ),
+                ),
+          };
+          const first = yield* adapter(http.url);
+          const interrupted = yield* first.publish(7, binding, patch, journal).pipe(Effect.exit);
+          expect(Exit.isFailure(interrupted)).toBe(true);
+          const next = yield* adapter(http.url);
+          expect((yield* next.publish(7, binding, patch, saved.journal)).number).toBe(101);
+          expect(http.posts.filter((post) => post.path === "/repos/acme/app/pulls")).toHaveLength(
+            1,
+          );
+        }),
+    );
+  }
+
+  it.effect("accepts 422 only when the raced branch and PR match the approved commit", () =>
+    Effect.gen(function* () {
+      const http = yield* publisherPeer();
+      http.raceRef("new-commit");
+      http.racePr();
+      const github = yield* adapter(http.url);
+      expect((yield* github.publish(7, binding, patch, memoryJournal().journal)).number).toBe(101);
+    }),
+  );
+
+  it.effect("refuses a conflicting raced branch without opening a PR or overwriting it", () =>
+    Effect.gen(function* () {
+      const http = yield* publisherPeer();
+      http.raceRef("someone-else");
+      const github = yield* adapter(http.url);
+      expect(
+        yield* github.publish(7, binding, patch, memoryJournal().journal).pipe(Effect.flip),
+      ).toMatchObject({ kind: "permanent", message: "branch conflict on puchero/7-v1" });
+      expect(http.branch()).toBe("someone-else");
+      expect(http.pr()).toBeNull();
+    }),
+  );
+
+  it.effect("refuses publication after the approved base branch moved", () =>
+    Effect.gen(function* () {
+      const http = yield* publisherPeer();
+      http.setBase("advanced-base");
+      const github = yield* adapter(http.url);
+      expect(
+        yield* github.publish(7, binding, patch, memoryJournal().journal).pipe(Effect.flip),
+      ).toMatchObject({
+        kind: "permanent",
+        message: "Base branch moved since validation; a new candidate must be approved",
+      });
+      expect(http.pr()).toBeNull();
+    }),
+  );
+  it.effect(
+    "hydrates issue context at one base commit and finds an existing linking comment on later pages",
+    () =>
+      Effect.gen(function* () {
+        const posted: Array<unknown> = [];
+        const http = yield* peer((request, response) => {
+          const path = request.url ?? "";
+          if (path === "/app/installations/42/access_tokens")
+            json(response, { token: "token" }, 201);
+          else if (path === "/repos/acme/app") json(response, { default_branch: "main" });
+          else if (path === "/repos/acme/app/git/ref/heads/main")
+            json(response, { object: { sha: "base-1" } });
+          else if (path === "/repos/acme/app/issues/7")
+            json(response, {
+              title: "Fix login",
+              body: "Login fails",
+              html_url: "https://github.test/issues/7",
+            });
+          else if (path.startsWith("/repos/acme/app/contents/AGENTS.md?ref=base-1"))
+            json(response, {
+              encoding: "base64",
+              content: Buffer.from("Use Effect").toString("base64"),
+            });
+          else if (path === "/repos/acme/app/issues/7/comments?per_page=100&page=1")
+            json(
+              response,
+              Array.from({ length: 100 }, () => ({ body: "context" })),
+            );
+          else if (path === "/repos/acme/app/issues/7/comments?per_page=100&page=2")
+            json(response, [{ body: "result\n\n<!-- puchero:cHVibGlzaGVkOnYx -->" }]);
+          else {
+            posted.push(path);
+            json(response, {}, 201);
+          }
+        });
+        const github = yield* adapter(http.url);
+        const context = yield* github.fetchIssueContext(repo, 7);
+        expect(context).toMatchObject({ baseRef: "main", baseSha: "base-1" });
+        expect(context.context).toContain("Fix login");
+        expect(context.context).toContain("Use Effect");
+        expect(context.context).toContain("context");
+        expect(context.context).toContain("https://github.test/issues/7");
+        yield* github.comment(repo, 7, "published:v1", "result");
+        expect(posted).toEqual([]);
+      }),
+  );
+  it.effect(
+    "publishes the exact binary, deletion and executable patch once against the base tree",
+    () =>
+      Effect.gen(function* () {
+        const http = yield* publisherPeer();
+        const github = yield* adapter(http.url);
+        const { journal, value } = memoryJournal();
+        expect(yield* github.publish(7, binding, patch, journal)).toEqual({
+          number: 101,
+          url: "https://github.test/acme/app/pull/101",
+        });
+        expect(yield* github.publish(7, binding, patch, journal)).toEqual({
+          number: 101,
+          url: "https://github.test/acme/app/pull/101",
+        });
+        expect(http.posts.filter((post) => post.path.endsWith("/git/trees"))).toEqual([
+          {
+            path: "/repos/acme/app/git/trees",
+            body: {
+              base_tree: "base-tree",
+              tree: [
+                { path: "old.txt", mode: "100644", type: "blob", sha: null },
+                { path: "logo.bin", mode: "100644", type: "blob", sha: "binary-blob" },
+                { path: "bin/run", mode: "100755", type: "blob", sha: "script-blob" },
+              ],
+            },
+          },
+        ]);
+        expect(http.posts.find((post) => post.path.endsWith("/git/blobs"))?.body).toEqual({
+          content: "AP8B/g==",
+          encoding: "base64",
+        });
+        expect(http.posts.find((post) => post.path.endsWith("/git/commits"))?.body).toMatchObject({
+          tree: "new-tree",
+          parents: ["base-1"],
+          author: { name: "puchero", email: "bot@example.com", date: "1970-01-01T00:00:00.000Z" },
+          committer: {
+            name: "puchero",
+            email: "bot@example.com",
+            date: "1970-01-01T00:00:00.000Z",
+          },
+        });
+        expect(http.posts.filter((post) => post.path === "/repos/acme/app/pulls")).toHaveLength(1);
+        expect(value()?.commitSha).toBe("new-commit");
+      }),
+  );
+  it.effect(
+    "mints a repository-scoped App token and fetches binary source and executable modes",
+    () =>
+      Effect.gen(function* () {
+        const calls: Array<string> = [];
+        const auth: Array<string> = [];
+        let tokenBody = "";
+        const http = yield* peer((request, response) => {
+          calls.push(`${request.method} ${request.url}`);
+          auth.push(request.headers.authorization ?? "");
+          if (request.url === "/app/installations/42/access_tokens") {
+            request.on("data", (chunk) => {
+              tokenBody += String(chunk);
+            });
+            request.on("end", () =>
+              json(
+                response,
+                { token: "installation-token", expires_at: "2099-01-01T00:00:00Z" },
+                201,
+              ),
+            );
+          } else if (request.url === "/repos/acme/app/git/commits/base-1")
+            json(response, { sha: "base-1", tree: { sha: "base-tree" } });
+          else if (request.url === "/repos/acme/app/git/trees/base-tree?recursive=1")
+            json(response, {
+              truncated: false,
+              tree: [
+                { path: "bin", mode: "040000", type: "tree", sha: "dir" },
+                { path: "bin/run", mode: "100755", type: "blob", sha: "script" },
+                { path: "logo.bin", mode: "100644", type: "blob", sha: "binary" },
+              ],
+            });
+          else if (request.url === "/repos/acme/app/git/blobs/script")
+            json(response, { encoding: "base64", content: "IyEvYmluL3NoCg==\n" });
+          else if (request.url === "/repos/acme/app/git/blobs/binary")
+            json(response, { encoding: "base64", content: "AP8B/g==" });
+          else json(response, { message: "Unexpected request" }, 404);
+        });
+        const github = yield* GitHubApp.make({
+          appId: "123",
+          installationId: 42,
+          privateKey,
+          repo,
+          apiUrl: http.url,
+          author: { name: "puchero", email: "bot@example.com" },
+        });
+        const files = yield* github.fetchSource(repo, "base-1");
+        expect(files.map((file) => ({ ...file, content: [...file.content] }))).toEqual([
+          {
+            path: "bin/run",
+            executable: true,
+            content: [35, 33, 47, 98, 105, 110, 47, 115, 104, 10],
+          },
+          { path: "logo.bin", executable: false, content: [0, 255, 1, 254] },
+        ]);
+        expect(JSON.parse(tokenBody)).toEqual({
+          repositories: ["app"],
+          permissions: { contents: "write", pull_requests: "write", issues: "write" },
+        });
+        const jwt = auth[0]?.slice("Bearer ".length) ?? "";
+        const [header, payload, signature] = jwt.split(".");
+        expect(
+          verify(
+            "RSA-SHA256",
+            Buffer.from(`${header}.${payload}`),
+            keys.publicKey,
+            Buffer.from(signature ?? "", "base64url"),
+          ),
+        ).toBe(true);
+        expect(JSON.parse(Buffer.from(payload ?? "", "base64url").toString())).toMatchObject({
+          iss: "123",
+        });
+        expect(auth.slice(1).every((value) => value === "Bearer installation-token")).toBe(true);
+        expect(calls).toContain("GET /repos/acme/app/git/trees/base-tree?recursive=1");
+      }),
+  );
+});

@@ -33,6 +33,9 @@ export const makeFakeGitHub = (options: {
     comments: [],
   };
   const service = GitHub.of({
+    fetchIssueContext: Effect.fn("FakeGitHub.fetchIssueContext")(function* () {
+      return { baseRef: "main", baseSha: "base-1", context: "Write the notes." };
+    }),
     fetchSource: Effect.fn("FakeGitHub.fetchSource")(function* () {
       return options.source;
     }),

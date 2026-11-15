@@ -12,7 +12,11 @@ const run = (events: ReadonlyArray<SessionEvent>, start = fresh()) => {
   for (const event of events) decision = decide(decision.state, event, now);
   return decision;
 };
-const labeled = Events.IssueLabeled.make({ context: "Fix the login bug", baseSha: "base1" });
+const labeled = Events.IssueLabeled.make({
+  context: "Fix the login bug",
+  baseSha: "base1",
+  baseRef: "main",
+});
 const answered = (runId: number) => Events.RunAnswered.make({ runId });
 const validated = (runId: number, patchDigest: string) =>
   Events.Validated.make({ runId, patchDigest, evidence: "typecheck ok, 12 tests passed" });
@@ -23,6 +27,7 @@ const firstBinding = {
   runId: 1,
   repo,
   baseSha: "base1",
+  baseRef: "main",
   patchDigest: "sha256:aaa",
 };
 const proposed = [labeled, answered(1), validated(1, "sha256:aaa")];
@@ -36,7 +41,7 @@ describe("decide", () => {
   it("starts run 1 with the issue context when an observed issue is labeled", () => {
     const { state, instructions, result } = decide(
       fresh(),
-      Events.IssueLabeled.make({ context: "Fix the login bug", baseSha: "base1" }),
+      Events.IssueLabeled.make({ context: "Fix the login bug", baseSha: "base1", baseRef: "main" }),
       now,
     );
     expect(result).toBe("applied");
@@ -87,6 +92,7 @@ describe("decide", () => {
     ["an older version", { ...firstBinding, version: 0 }],
     ["another digest", { ...firstBinding, patchDigest: "sha256:bbb" }],
     ["another base", { ...firstBinding, baseSha: "base0" }],
+    ["another base branch", { ...firstBinding, baseRef: "release" }],
     ["another run", { ...firstBinding, runId: 2 }],
   ])("refuses an approval for %s", (_case, binding) => {
     const { state, instructions, result } = run([...proposed, approve(binding)]);
