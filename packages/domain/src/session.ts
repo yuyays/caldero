@@ -11,6 +11,7 @@ export const ApprovalBinding = Schema.Struct({
   runId: Schema.Int,
   repo: Repo,
   baseSha: Schema.String,
+  baseRef: Schema.String,
   patchDigest: Schema.String,
 });
 export type ApprovalBinding = typeof ApprovalBinding.Type;
@@ -50,6 +51,7 @@ export const SessionState = Schema.Struct({
   /** Increments with every proposed candidate. */
   version: Schema.Int,
   baseSha: Schema.NullOr(Schema.String),
+  baseRef: Schema.NullOr(Schema.String),
   candidate: Schema.NullOr(Candidate),
   /** Failed attempts of the current phase. */
   attempts: Schema.Int,
@@ -64,7 +66,7 @@ export const SessionState = Schema.Struct({
 export type SessionState = typeof SessionState.Type;
 
 export const SessionEvent = Schema.TaggedUnion({
-  IssueLabeled: { context: Schema.String, baseSha: Schema.String },
+  IssueLabeled: { context: Schema.String, baseSha: Schema.String, baseRef: Schema.String },
   UserInput: { text: Schema.String },
   RunAnswered: { runId: Schema.Int },
   Validated: { runId: Schema.Int, patchDigest: Schema.String, evidence: Schema.String },
@@ -107,6 +109,7 @@ const sameBinding = (a: ApprovalBinding, b: ApprovalBinding) =>
   a.repo.owner === b.repo.owner &&
   a.repo.name === b.repo.name &&
   a.baseSha === b.baseSha &&
+  a.baseRef === b.baseRef &&
   a.patchDigest === b.patchDigest;
 
 /** `applied` changed the session; `duplicate` repeats what already happened; `stale` was refused. */
@@ -134,6 +137,7 @@ export const initialSession = (init: {
     runId: 0,
     version: 0,
     baseSha: null,
+    baseRef: null,
     candidate: null,
     attempts: 0,
     queued: [],
@@ -200,10 +204,12 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
   };
 
   return SessionEvent.match(event, {
-    IssueLabeled: ({ context, baseSha }) => {
+    IssueLabeled: ({ context, baseSha, baseRef }) => {
       if (state.policy === "off") return unchanged("stale");
       if (state.status !== "idle") return unchanged("duplicate");
-      return applied({ status: "running", runId: 1, baseSha }, [submit(1, "start", context)]);
+      return applied({ status: "running", runId: 1, baseSha, baseRef }, [
+        submit(1, "start", context),
+      ]);
     },
     UserInput: ({ text }) => {
       switch (state.status) {
@@ -230,7 +236,8 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
       ]);
     },
     Validated: ({ runId, patchDigest, evidence }) => {
-      if (!isCurrentRun(runId, "validating") || state.baseSha === null) return unchanged("stale");
+      if (!isCurrentRun(runId, "validating") || state.baseSha === null || state.baseRef === null)
+        return unchanged("stale");
       const version = state.version + 1;
       const binding = {
         sessionId: state.sessionId,
@@ -238,6 +245,7 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
         runId,
         repo: state.repo,
         baseSha: state.baseSha,
+        baseRef: state.baseRef,
         patchDigest,
       };
       return applied({

@@ -36,6 +36,9 @@ import {
   errorMessage,
   type Checkpoint,
   GitHub,
+  GitHubError,
+  type PublishJournal,
+  PublishProgress,
   type Patch,
   Projection,
   PublishError,
@@ -77,6 +80,17 @@ const WorkspaceDoc = defineDoc<{ bootId: string | null; checkpoint: Checkpoint |
   checkpointWhen: () => true,
 });
 const decodeInstruction = Schema.decodeUnknownSync(Instruction);
+
+const publishJson = Schema.fromJsonString(PublishProgress);
+const decodePublish = Schema.decodeSync(publishJson);
+const encodePublish = Schema.encodeSync(publishJson);
+const PublishDoc = defineDoc<{ entries: Record<string, string> }>({
+  kind: "puchero.publish",
+  version: 1,
+  scope: "session",
+  initial: () => ({ entries: {} }),
+  checkpointWhen: () => true,
+});
 
 export class SessionHostError extends Schema.TaggedError<SessionHostError>()("SessionHostError", {
   message: Schema.String,
@@ -159,7 +173,7 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
   };
 
   /** The event an instruction's action produced, if any. Expected failures become events; others fail the task. */
-  const perform = (instruction: Instruction, state: SessionState) =>
+  const perform = (instruction: Instruction, state: SessionState, journal: PublishJournal) =>
     Instruction.match(instruction, {
       Validate: ({ runId }) =>
         // A validation the session no longer waits for would only race the next run's edits.
@@ -185,14 +199,14 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
           Effect.mapError(
             (error) => new PublishError({ kind: "permanent", message: error.message }),
           ),
-          Effect.flatMap((patch) => github.publish(state.issue, binding, patch)),
+          Effect.flatMap((patch) => github.publish(state.issue, binding, patch, journal)),
           Effect.map((pullRequest): SessionEvent => Events.PublishSucceeded.make(pullRequest)),
           Effect.catchTag("PublishError", (error) =>
             Effect.succeed(Events.PublishFailed.make({ kind: error.kind, message: error.message })),
           ),
         ),
       Reconcile: ({ binding }) =>
-        github.reconcile(state.issue, binding).pipe(
+        github.reconcile(state.issue, binding, journal).pipe(
           Effect.map((result): SessionEvent => {
             if (result.found === "pullRequest")
               return Events.PublishSucceeded.make(result.pullRequest);
@@ -331,7 +345,29 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
           return;
         }
 
-        const outcome = await run(Effect.exit(perform(instruction, await readState())), {
+        const journalKey = String("binding" in instruction ? instruction.binding.version : 0);
+        const journal: PublishJournal = {
+          read: () =>
+            Effect.tryPromise({
+              try: async () => {
+                const saved = await runtime.snapshot(PublishDoc, taskContext);
+                const value = saved?.entries[journalKey];
+                return value === undefined ? null : decodePublish(value);
+              },
+              catch: (error) => new GitHubError({ message: errorMessage(error) }),
+            }),
+          // Once a receipt commit starts, finish it despite caller cancellation. Pi still rejects writes
+          // after the task invocation ends or the host closes; this does not extend the task's lifetime.
+          save: (progress) =>
+            Effect.tryPromise({
+              try: () =>
+                runtime.commit(async (tx) => {
+                  (await tx.doc(PublishDoc)).entries[journalKey] = encodePublish(progress);
+                }, context),
+              catch: (error) => new GitHubError({ message: errorMessage(error) }),
+            }).pipe(Effect.uninterruptible),
+        };
+        const outcome = await run(Effect.exit(perform(instruction, await readState(), journal)), {
           signal: runtime.signal,
         });
         const failed = Exit.isFailure(outcome)

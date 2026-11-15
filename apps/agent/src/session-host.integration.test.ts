@@ -9,7 +9,7 @@ import { Effect, Layer } from "effect";
 import { Base64 } from "effect/encoding";
 import { makeFakeGitHub } from "./fake-github.ts";
 import { LocalWorkspace } from "./local-workspace.ts";
-import { GitHub, Projection, Workspace } from "./ports.ts";
+import { GitHub, Projection, PublishError, Workspace } from "./ports.ts";
 import { makeMemoryWorkspaceStore } from "./workspace-store.ts";
 import { openSessionHost } from "./session-host.ts";
 import {
@@ -25,7 +25,11 @@ const source = [
   { path: "README.md", content: new TextEncoder().encode("# app\n"), executable: false },
   { path: "bin/run", content: new TextEncoder().encode("#!/bin/sh\n"), executable: true },
 ];
-const labeled = Events.IssueLabeled.make({ context: "Write the notes.", baseSha: "base-1" });
+const labeled = Events.IssueLabeled.make({
+  context: "Write the notes.",
+  baseSha: "base-1",
+  baseRef: "main",
+});
 
 /** A promise and the function that settles it, for steps a test waits on. */
 const signal = () => {
@@ -48,6 +52,10 @@ const setup = Effect.fn("setup")(function* (
     /** Every validation dies with this defect instead of running. */
     readonly validationDefect?: Error;
     readonly crashAtCheckpoint?: "uploaded" | "committed";
+    readonly wrapGitHub?: (
+      github: ReturnType<typeof GitHub.of>,
+      crash: () => void,
+    ) => ReturnType<typeof GitHub.of>;
   } = {},
 ) {
   const root = yield* Effect.promise(() => mkdtemp(join(tmpdir(), "puchero-")));
@@ -101,6 +109,7 @@ const setup = Effect.fn("setup")(function* (
         return Workspace.of({ ...process.gate({ ...local, validate, checkpoint }), env: watched });
       }),
     ).pipe(Layer.provide(workspace));
+    const rawGitHub = yield* GitHub.pipe(Effect.provide(github.layer));
     const services = Layer.mergeAll(
       gated,
       Layer.succeed(
@@ -109,7 +118,10 @@ const setup = Effect.fn("setup")(function* (
       ),
     ).pipe(
       Layer.provideMerge(
-        Layer.succeed(GitHub, process.gate(yield* GitHub.pipe(Effect.provide(github.layer)))),
+        Layer.succeed(
+          GitHub,
+          process.gate(options.wrapGitHub?.(rawGitHub, process.crash) ?? rawGitHub),
+        ),
       ),
     );
     const host = yield* openSessionHost({
@@ -161,6 +173,55 @@ const propose = Effect.fn("propose")(function* (
 });
 
 describe("SessionHost", () => {
+  it.effect("retains a publish receipt in Pi when its host dies before returning the result", () =>
+    Effect.gen(function* () {
+      let interrupted = false;
+      let resumedCommit: string | null = null;
+      const first = yield* setup({
+        wrapGitHub: (github, crash) => ({
+          ...github,
+          publish: (issue, binding, patch, journal) =>
+            Effect.gen(function* () {
+              const saved = yield* journal.read();
+              if (saved === null) {
+                yield* journal.save({
+                  binding,
+                  issue,
+                  author: { name: "bot", email: "bot@example.com", date: "2026-01-01T00:00:00Z" },
+                  message: "fixed message",
+                  title: "fixed title",
+                  body: "fixed body",
+                  baseTree: "tree",
+                  blobs: [],
+                  treeSha: "new-tree",
+                  commitSha: "committed-on-github",
+                  refCreated: false,
+                  pullRequest: null,
+                });
+                interrupted = true;
+                crash();
+                return yield* Effect.die(new Error("Process died after the durable receipt"));
+              }
+              resumedCommit = saved.commitSha;
+              return yield* github.publish(issue, binding, patch, journal);
+            }).pipe(
+              Effect.catchTag("GitHubError", (error) =>
+                Effect.fail(new PublishError({ kind: "ambiguous", message: error.message })),
+              ),
+            ),
+        }),
+      });
+      const binding = yield* propose(first.host);
+      yield* first.host.deliver(Events.Approve.make({ actor: "ann", binding }), "approve");
+      yield* first.crashed;
+      const next = yield* first.open();
+      yield* next.host.drain();
+      expect(interrupted).toBe(true);
+      expect(resumedCommit).toBe("committed-on-github");
+      expect((yield* next.host.view()).state.status).toBe("published");
+      expect(first.github.state.pullRequests).toHaveLength(1);
+    }),
+  );
   for (const crashAtCheckpoint of ["uploaded", "committed"] as const) {
     it.effect(
       `recovers after checkpoint ${crashAtCheckpoint}, before the tool result, and restores on a changed boot`,

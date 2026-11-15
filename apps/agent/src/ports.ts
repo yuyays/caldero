@@ -1,5 +1,5 @@
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
-import type { ApprovalBinding, Repo, SessionState } from "@puchero/domain";
+import { ApprovalBinding, type Repo, type SessionState } from "@puchero/domain";
 import { Context, type Effect, Schema } from "effect";
 
 /** A failure's message, for errors that cross into a typed error or a stored outcome. */
@@ -102,9 +102,38 @@ export class Workspace extends Context.Service<
 export const PullRequest = Schema.Struct({ number: Schema.Int, url: Schema.String });
 export type PullRequest = typeof PullRequest.Type;
 
+/** Frozen publish intent and stage receipts. The host stores these outside the sandbox in Pi. */
+export const PublishProgress = Schema.Struct({
+  binding: ApprovalBinding,
+  issue: Schema.Int,
+  author: Schema.Struct({ name: Schema.String, email: Schema.String, date: Schema.String }),
+  message: Schema.String,
+  title: Schema.String,
+  body: Schema.String,
+  baseTree: Schema.NullOr(Schema.String),
+  blobs: Schema.NullOr(Schema.Array(Schema.Struct({ path: Schema.String, sha: Schema.String }))),
+  treeSha: Schema.NullOr(Schema.String),
+  commitSha: Schema.NullOr(Schema.String),
+  refCreated: Schema.Boolean,
+  pullRequest: Schema.NullOr(PullRequest),
+});
+export type PublishProgress = typeof PublishProgress.Type;
+
 export class GitHubError extends Schema.TaggedError<GitHubError>()("GitHubError", {
   message: Schema.String,
 }) {}
+
+/** Each save must commit before the adapter advances; failures stop the current operation. */
+export interface PublishJournal {
+  readonly read: () => Effect.Effect<PublishProgress | null, GitHubError>;
+  readonly save: (progress: PublishProgress) => Effect.Effect<void, GitHubError>;
+}
+
+export interface IssueContext {
+  readonly baseRef: string;
+  readonly baseSha: string;
+  readonly context: string;
+}
 
 /** Why a publish failed; `ambiguous` means it may have landed and must be reconciled, not repeated. */
 export class PublishError extends Schema.TaggedError<PublishError>()("PublishError", {
@@ -112,7 +141,7 @@ export class PublishError extends Schema.TaggedError<PublishError>()("PublishErr
   message: Schema.String,
 }) {}
 
-/** What reconciling an ambiguous publish found on GitHub. */
+/** What recovery found. An expected branch without a PR may finish the journaled PR stage. */
 export type ReconcileResult =
   | { readonly found: "pullRequest"; readonly pullRequest: PullRequest }
   | { readonly found: "nothing" }
@@ -126,6 +155,10 @@ export const branchName = (issue: number, binding: ApprovalBinding) =>
 export class GitHub extends Context.Service<
   GitHub,
   {
+    readonly fetchIssueContext: (
+      repo: Repo,
+      issue: number,
+    ) => Effect.Effect<IssueContext, GitHubError>;
     readonly fetchSource: (
       repo: Repo,
       sha: string,
@@ -134,10 +167,12 @@ export class GitHub extends Context.Service<
       issue: number,
       binding: ApprovalBinding,
       patch: Patch,
+      journal: PublishJournal,
     ) => Effect.Effect<PullRequest, PublishError>;
     readonly reconcile: (
       issue: number,
       binding: ApprovalBinding,
+      journal: PublishJournal,
     ) => Effect.Effect<ReconcileResult, GitHubError>;
     readonly comment: (
       repo: Repo,

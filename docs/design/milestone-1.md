@@ -52,7 +52,7 @@ decide(state: SessionState, event: SessionEvent, now: Instant): { state: Session
 - **Rules it owns:**
   - Policy `off | observe` (milestone 1), resolved by `SessionDO` for the repo and label when the session is
     created; the reducer enforces it.
-  - **Approval binding** `(sessionId, version, runId, repo, baseSha, patchDigest)`. A mismatch, a repeat of a
+  - **Approval binding** `(sessionId, version, runId, repo, baseRef, baseSha, patchDigest)`. A mismatch, a repeat of a
     decided approval, or any state but `awaitingApproval` is rejected as stale; a duplicate of the winning approval
     is a no-op.
   - **Results are bound to their run:** `Validated` for anything but the current `runId` is ignored, so queued input
@@ -118,25 +118,27 @@ interface Workspace {
 
 ```ts
 interface GitHub {
-  fetchIssueContext(issue: IssueRef): Effect<IssueContext, GitHubError>;
-  fetchTarball(repo: RepoRef, sha: string): Effect<ReadableStream, GitHubError>;
+  fetchIssueContext(repo: Repo, issue: number): Effect<IssueContext, GitHubError>;
+  fetchSource(repo: Repo, sha: string): Effect<ReadonlyArray<SourceFile>, GitHubError>;
   publish(
+    issue: number,
     binding: ApprovalBinding,
     patch: Patch,
     journal: PublishJournal,
   ): Effect<PullRequest, PublishError>;
   reconcile(
+    issue: number,
     binding: ApprovalBinding,
     journal: PublishJournal,
   ): Effect<ReconcileResult, GitHubError>;
-  comment(issue: IssueRef, key: string, text: string): Effect<void, GitHubError>; // key in a hidden marker
+  comment(repo: Repo, issue: number, key: string, text: string): Effect<void, GitHubError>; // key in a hidden marker
 }
 ```
 
 - **Publish is journaled by stage** (`blobs → tree → commit → ref → pr`); each stage's result is committed before
   the next. Binary files go as base64 blobs, deletions as tree entries with `sha: null`, modes preserved.
-  `base_tree` is the **tree SHA** of `baseSha`. Commit metadata (author, committer, dates, message) is fixed in the
-  binding, so a retry produces the same commit SHA.
+  `base_tree` is the **tree SHA** of `baseSha`. Commit metadata (author, committer, dates, message) is frozen in the
+  publish journal before the first request, so a retry produces the same commit SHA.
 - **Reconciliation** checks the branch `puchero/<issue>-v<version>` against the journaled commit SHA, then searches
   open **and closed** PRs from that branch. A branch at the expected commit without a PR resumes at the `pr` stage;
   a branch at a different commit fails as `permanent` ("branch conflict"). A 422 counts as success only after
@@ -280,7 +282,37 @@ The existing session criteria remain covered. Local `alchemy dev` with Docker re
 DO SQLite, container tools, checkpoint upload and R2 patch retrieval. Cloudflare deployment, real eviction/CPU limits,
 and reset/reconnect recovery on the deployed platform remain unverified; no deployment was performed.
 
-## Open questions
+### Step 4 as built
+
+`GitHubApp` implements the GitHub seam with Effect workflows over GitHub REST. App credentials remain outside the
+sandbox; each operation mints a fresh token restricted to the configured repository and required permissions.
+
+- **Approval identity:** `baseRef` travels from `IssueLabeled` into the candidate binding. A changed base branch is
+  refused before creating a ref and again before opening a new PR. It is a permanent publication failure, so the
+  session ends as `failed` under the existing reducer. Restart from updated issue context in a fresh session and
+  approve its new candidate; automatic rebase/re-proposal is outside this milestone. A race between the two base
+  checks may leave an unused branch, which the adapter never deletes. This is a schema change: use a fresh development session rather than loading old
+  sessions without `baseRef`.
+- **Publish journal:** SessionHost supplies read/save callbacks backed by the `puchero.publish` Pi document. Entries
+  are keyed by candidate version and verify the full binding and issue. Intent metadata, base tree, the complete blob
+  map, tree, commit, reference and PR receipts each commit before advancing. Interrupted uploads may leave unreachable
+  Git objects; replay uses the same content and commit metadata. No credentials or patch payloads enter the journal.
+- **Recovery:** reference creation is create-only. Existing refs must equal the journaled commit. PR lookup includes
+  closed PRs and checks head SHA and base branch. Reconciliation can finish the PR stage when the expected branch
+  exists, rather than reporting a retry that rebuilds the publication. A 422 is accepted only after checking remote
+  state; conflicts fail visibly.
+- **Read path:** issue context includes paginated comments and root `AGENTS.md` at the captured base SHA. `fetchSource`
+  remains a file-list interface, using Git tree/blob reads with concurrency 8; truncated trees and unsupported
+  symlink/submodule entries fail rather than silently changing the repository. Tarball streaming is deferred. Actual
+  trigger provenance (delivery ID, sender and label) must be appended by the later webhook admission layer; fetching
+  an issue alone cannot infer the event that caused this session.
+- **Checks:** HTTP contract tests cover stage receipts/restarts, lost responses, ref/PR races, binary/deletion/mode
+  payloads, base movement, comment deduplication and App token scoping. A SessionHost integration check exercises
+  Pi-backed publication receipts across a process restart. The opt-in live scratch App check is documented in
+  `apps/agent/README.md`; it requires an existing App installation and has not yet run. The dev Worker still uses
+  fake GitHub/models; webhook admission, the inbox and production deployment remain later work.
+
+## Remaining questions
 
 - Validation dependencies: are baked caches enough for typical repos, or do we need an egress allowlist?
 - Throughput of tarball upload through pi-env chunks for large repositories.
