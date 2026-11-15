@@ -20,7 +20,8 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The job takes about two minutes; a hang should not burn the full default.
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v7
         with:
@@ -35,6 +36,9 @@ jobs:
       - run: pnpm format:check
       - run: pnpm typecheck
       - run: pnpm test
-      - run: pnpm browser:install --with-deps
+      # The browser project runs headless with no channel, so the ~90 MB headless shell is
+      # all it needs; the headed Chromium download was unused. `--with-deps` stays, since
+      # the system libraries are not something a checked-in download can replace.
+      - run: pnpm browser:install --with-deps --only-shell
       - run: pnpm test:browser
       - run: pnpm build
