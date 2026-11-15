@@ -99,12 +99,18 @@ export default defineConfig({
           "apps/agent/src/SessionDO.ts",
           "apps/web/src/lib/api-client.ts",
           "apps/web/src/lib/users.ts",
+          "apps/web/src/lib/inbox.ts",
           ...testFiles,
         ],
         rules: { "starter/runtime-boundary": "off" },
       },
       {
-        files: ["apps/agent/src/SessionDO.ts"],
+        // Cloudflare and runtime-selection entry points compose scoped services.
+        files: [
+          "apps/agent/src/SessionDO.ts",
+          "apps/agent/src/worker.ts",
+          "apps/agent/src/agent-settings.ts",
+        ],
         rules: { "effecttsgo/strict-effect-provide": "off" },
       },
       {
@@ -139,7 +145,7 @@ export default defineConfig({
       },
       {
         // The browser client module is the frontend's Effect entry point.
-        files: ["apps/web/src/lib/api-client.ts"],
+        files: ["apps/web/src/lib/api-client.ts", "apps/web/src/lib/inbox.ts"],
         rules: { "effecttsgo/strict-effect-provide": "off" },
       },
       {

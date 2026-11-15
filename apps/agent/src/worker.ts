@@ -1,41 +1,92 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
-import { SessionEvent } from "@puchero/domain";
-import { Effect, Schema } from "effect";
-import { HttpServerRequest } from "effect/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { InboxUnavailable } from "@puchero/contracts/inbox";
+import { Effect, Layer } from "effect";
+import { HttpRouter, HttpServer } from "effect/http";
+import { agentEnvironment, makeAgentRuntime } from "./agent-settings.ts";
+import { InboxAuth, makeInboxAuth } from "./inbox-auth.ts";
+import { inboxDatabase } from "./inbox-database.ts";
+import { ApplicationRoutes, InboxConfig, Sessions } from "./inbox-http.ts";
+import { InboxStore, makeD1InboxStore } from "./inbox-store.ts";
+import { GitHub } from "./ports.ts";
 import { SessionDO } from "./SessionDO.ts";
 
-const decodeDelivery = Schema.decodeUnknownEffect(
-  Schema.Struct({ event: SessionEvent, eventId: Schema.String }),
-);
-
-/** Development transport only; GitHub verification and inbox authentication arrive in later steps. */
+/** Signed admission and authenticated decisions are the only public session transports. */
 export default class Agent extends Cloudflare.Worker<Agent>()(
   "Agent",
-  { main: import.meta.url },
+  {
+    main: import.meta.url,
+    env: agentEnvironment,
+    assets: {
+      directory: "../web/dist",
+      notFoundHandling: "single-page-application",
+      runWorkerFirst: ["/api/*", "/webhooks/*"],
+    },
+  },
   Effect.gen(function* () {
-    const sessions = yield* SessionDO;
+    const namespace = yield* SessionDO;
+    const database = yield* Cloudflare.D1.QueryDatabase(yield* inboxDatabase);
+    const runtime = yield* makeAgentRuntime().pipe(Effect.orDie);
+    const auth = yield* makeInboxAuth(runtime.settings.auth).pipe(Effect.orDie);
     return {
       fetch: Effect.gen(function* () {
-        const request = yield* HttpServerRequest;
-        const [, prefix, name, action] = new URL(request.url, "http://localhost").pathname.split(
-          "/",
+        const index = makeD1InboxStore(yield* database.raw);
+        const context =
+          yield* Effect.context<
+            Effect.Services<ReturnType<ReturnType<typeof namespace.getByName>["view"]>>
+          >();
+        const prefix = `${runtime.settings.repo.owner}/${runtime.settings.repo.name}#`;
+        const stub = (id: string) =>
+          id.startsWith(prefix) && /^[1-9]\d*$/.test(id.slice(prefix.length))
+            ? namespace.getByName(id)
+            : undefined;
+        const sessions = Sessions.of({
+          read: Effect.fn("Sessions.read")(
+            function* (id) {
+              const session = stub(id);
+              return session === undefined ? null : yield* session.view();
+            },
+            Effect.provide(context),
+            Effect.catchCause(() =>
+              Effect.fail(new InboxUnavailable({ message: "Session is unavailable" })),
+            ),
+          ),
+          deliver: Effect.fn("Sessions.deliver")(
+            function* (id, event, eventId) {
+              const session = stub(id);
+              return session === undefined ? null : yield* session.deliver(event, eventId);
+            },
+            Effect.provide(context),
+            Effect.catchCause(() =>
+              Effect.fail(
+                new InboxUnavailable({ message: "Decision could not be delivered; retry it" }),
+              ),
+            ),
+          ),
+          start: Effect.fn("Sessions.start")(
+            function* (issue, event, deliveryId) {
+              yield* namespace.getByName(`${prefix}${issue}`).start(issue, event, deliveryId);
+            },
+            Effect.provide(context),
+            Effect.catchCause(() =>
+              Effect.fail(new InboxUnavailable({ message: "Session admission is unavailable" })),
+            ),
+          ),
+        });
+        const services = Layer.mergeAll(
+          Layer.succeed(Sessions, sessions),
+          Layer.succeed(InboxConfig, runtime.settings),
+          Layer.succeed(InboxAuth, auth),
+          Layer.succeed(InboxStore, index),
+          Layer.succeed(GitHub, runtime.github),
         );
-        if (prefix !== "s" || !name)
-          return HttpServerResponse.text("Use /s/:name/view or POST /s/:name/deliver", {
-            status: 404,
-          });
-        const session = sessions.getByName(name);
-        if (request.method === "GET" && action === "view")
-          return yield* HttpServerResponse.json(yield* session.view());
-        if (request.method === "POST" && action === "deliver") {
-          const delivery = yield* decodeDelivery(yield* request.json);
-          return yield* HttpServerResponse.json(
-            yield* session.deliver(delivery.event, delivery.eventId),
-          );
-        }
-        return HttpServerResponse.text("Unknown route", { status: 404 });
+        const fetch = yield* HttpRouter.toHttpEffect(
+          ApplicationRoutes.pipe(
+            Layer.provideMerge(services),
+            Layer.provide(HttpServer.layerServices),
+          ),
+        );
+        return yield* fetch.pipe(Effect.provide(services));
       }).pipe(Effect.orDie),
     };
-  }),
+  }).pipe(Effect.provide(Cloudflare.D1.QueryDatabaseBinding)),
 ) {}

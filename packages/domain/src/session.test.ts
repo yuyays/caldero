@@ -38,6 +38,20 @@ const input = (text: string) => Events.UserInput.make({ text });
 const approve = (binding = firstBinding) => Events.Approve.make({ actor: "yuyays", binding });
 
 describe("decide", () => {
+  it("keeps the state of each projected revision even when later events change the session", () => {
+    const first = run([labeled]);
+    const projected = first.instructions.find((instruction) => instruction["_tag"] === "Project");
+    expect(projected).toHaveProperty("snapshot");
+    if (projected?.["_tag"] !== "Project") expect.unreachable();
+    expect(JSON.parse(projected.snapshot)).toMatchObject({
+      status: "running",
+      revision: 1,
+      runId: 1,
+    });
+    const later = run([...proposed, approve()]);
+    expect(later.state.status).toBe("publishing");
+    expect(JSON.parse(projected.snapshot).status).toBe("running");
+  });
   it("starts run 1 with the issue context when an observed issue is labeled", () => {
     const { state, instructions, result } = decide(
       fresh(),

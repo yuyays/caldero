@@ -11,3 +11,5 @@ packages/create-puchero/template
 .output
 
 .alchemy
+
+.vitest

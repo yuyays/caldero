@@ -20,8 +20,8 @@ pnpm db:migrate
 pnpm dev
 ```
 
-`pnpm dev:web` or `pnpm dev:api` starts one server. The web app proxies
-`/api` and `/docs` to the API; ports are set in `apps/web/vite.config.ts` and
+`pnpm dev:web` or `pnpm dev:api` starts one server. The web app is now the agent review inbox; see [agent setup](apps/agent/README.md). It proxies
+`/api` to the agent on 1337 and `/docs` to the separate Node starter API; ports are set in `apps/web/vite.config.ts` and
 `apps/api/.env`.
 
 ## Verify changes

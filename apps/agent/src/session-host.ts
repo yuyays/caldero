@@ -226,7 +226,8 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
         ),
       Comment: ({ key, text }) =>
         github.comment(state.repo, state.issue, key, text).pipe(Effect.as(undefined)),
-      Project: () => projection.project(state).pipe(Effect.as(undefined)),
+      Project: ({ snapshot, instructionId }) =>
+        projection.project(decodeState(snapshot), instructionId).pipe(Effect.as(undefined)),
       // Both act on Pi itself, in the task.
       AbortRun: () => Effect.succeed(undefined),
       Submit: () => Effect.succeed(undefined),

@@ -46,7 +46,7 @@ decide(state: SessionState, event: SessionEvent, now: Instant): { state: Session
   `ValidationFailed(runId, evidence)`, `RunFailed(runId, reason)`, `Approve(actor, binding)`, `Reject(actor, binding)`,
   `Cancel(actor)`, `PublishSucceeded(pr)`, `PublishFailed(kind: "retryable" | "permanent" | "ambiguous")`.
 - **Instructions** (data, each with a unique `instructionId`): `Submit(draft)`, `Validate(runId)`, `AbortRun`,
-  `Publish(binding)`, `Reconcile(binding)`, `Project(revision)`, `Comment(key, text)`.
+  `Publish(binding)`, `Reconcile(binding)`, `Project(revision, snapshot)`, `Comment(key, text)`.
 - **States:** `idle → running → validating → awaitingApproval → publishing → published`, plus `rejected`,
   `cancelled`, `failed`. `version` increments with every proposed candidate; `runId` identifies each Pi run.
 - **Rules it owns:**
@@ -152,10 +152,10 @@ interface GitHub {
 - `POST /webhooks/github`: verify `X-Hub-Signature-256`, map the delivery to an event with
   `eventId = X-GitHub-Delivery`, call `deliver`, acknowledge after it resolves. Unmapped events → 204.
 - Inbox API (schemas in `packages/contracts`): list sessions (D1), get one (`view`), approve/reject with the
-  binding shown, cancel. Auth: a fully validated Cloudflare Access JWT plus an allowlist of GitHub logins who may
+  binding shown, cancel. Auth: a fully validated Cloudflare Access JWT plus a mapping of verified emails to GitHub logins who may
   approve. Local dev uses a static dev token.
-- **D1 projection:** `Project(revision)` upserts `sessions(..., revision)` only when its revision is newer, and
-  inserts `audit` rows keyed by `instructionId`. D1 is rebuildable from the DOs; no decision reads it.
+- **D1 projection:** `Project(revision, snapshot)` upserts `sessions(..., revision)` only when its revision is newer, and
+  inserts `audit` rows keyed by `instructionId`. The instruction carries its immutable reducer-state snapshot. No decision reads D1. A global rebuild is deferred because DO namespaces cannot enumerate sessions; recovery requires independently known session IDs.
 
 ### Model access
 
@@ -316,3 +316,21 @@ sandbox; each operation mints a fresh token restricted to the configured reposit
 
 - Validation dependencies: are baked caches enough for typical repos, or do we need an egress allowlist?
 - Throughput of tarball upload through pi-env chunks for large repositories.
+
+### Step 5 as built
+
+The Worker admits only signed `issues/labeled/agent` deliveries for its configured repository and installation,
+hydrates context and provenance, then acknowledges the durable admission. Named sessions use `owner/repo#issue`;
+reads never initialize one. Access JWT verification maps a verified email to a configured GitHub reviewer. Local
+static tokens require explicit dev mode with no Access configuration. Mutation requests require same-origin JSON;
+actors are derived on the server. The arbitrary development delivery route is removed.
+
+Shared contracts expose list, detail, viewer, approve/reject/cancel and additional input. Applied/duplicate decisions
+return the authoritative view; stale decisions return 409 with the current view. The inbox shows exact approval
+identity, diff and evidence; blocks decisions in flight; and confirms candidate replacement by additional input.
+
+D1 receives a transactional newer-revision-only summary upsert and an instruction-keyed audit insert. Project
+instructions now freeze their own state snapshot, preserving audit identity across delayed/replayed execution.
+The list is bounded to 100 summaries, detail history to 200 rows; neither API pagination nor global index rebuild
+is included. Decisions use DO state regardless of index lag. See `apps/agent/README.md` for configuration, local
+fixtures, schema compatibility and remaining deployment/live-App checks.
