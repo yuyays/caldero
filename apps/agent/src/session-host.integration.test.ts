@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { MemoryStorage } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "@effect/vitest";
-import { Events, type Policy } from "@puchero/domain";
+import { Events } from "@puchero/domain";
 import { Effect, Layer } from "effect";
 import { Base64 } from "effect/encoding";
 import { makeFakeGitHub } from "./fake-github.ts";
@@ -43,7 +43,6 @@ const signal = () => {
  */
 const setup = Effect.fn("setup")(function* (
   options: {
-    readonly policy?: Policy;
     readonly checks?: (root: string) => ReadonlyArray<string>;
     readonly github?: Omit<Parameters<typeof makeFakeGitHub>[0], "source">;
     /** Runs when a tool starts writing a file, before the write. */
@@ -170,7 +169,7 @@ const setup = Effect.fn("setup")(function* (
           },
         }),
       ),
-      session: { sessionId: "acme/app#7", repo, issue: 7, policy: options.policy ?? "observe" },
+      session: { sessionId: "acme/app#7", repo, issue: 7 },
       models: scripted.models,
       model: scripted.model,
     }).pipe(Effect.provide(services));
@@ -209,14 +208,12 @@ describe("SessionHost", () => {
     () =>
       Effect.gen(function* () {
         const { host, github } = yield* setup({
-          policy: "auto",
           github: { dropResponses: { kind: "ambiguous", times: 1 } },
         });
         yield* host.deliver(labeled, "auto-label");
         yield* host.drain();
         const view = yield* host.view();
         expect(view.state).toMatchObject({
-          policy: "auto",
           status: "published",
           version: 1,
           runId: 1,
@@ -234,7 +231,7 @@ describe("SessionHost", () => {
   );
   it.effect("never automatically publishes a patch that fails validation", () =>
     Effect.gen(function* () {
-      const { host, github } = yield* setup({ policy: "auto", checks: () => ["false"] });
+      const { host, github } = yield* setup({ checks: () => ["false"] });
       yield* host.deliver(labeled, "auto-failed-label");
       yield* host.drain();
       expect((yield* host.view()).state).toMatchObject({
@@ -245,23 +242,6 @@ describe("SessionHost", () => {
       expect(github.state.pullRequests).toHaveLength(0);
     }),
   );
-  it.effect(
-    "preserves an existing manual-approval session when a reopened host is configured for auto",
-    () =>
-      Effect.gen(function* () {
-        const options: { policy: Policy } = { policy: "observe" };
-        const { host, crash, open, github } = yield* setup(options);
-        const binding = yield* propose(host);
-        crash();
-        options.policy = "auto";
-        const next = yield* open();
-        const view = yield* next.host.view();
-        expect(view.state).toMatchObject({ policy: "observe", status: "awaitingApproval" });
-        expect(view.state.candidate?.binding).toEqual(binding);
-        expect(github.state.pullRequests).toHaveLength(0);
-      }),
-  );
-
   it.effect(
     "refuses corrupt persisted state as a permanent fault without replacing the candidate",
     () =>
@@ -282,84 +262,58 @@ describe("SessionHost", () => {
       }),
   );
 
-  it.effect("keeps session state and cancellation available when a frozen patch blob is lost", () =>
+  it.effect("retains a publish receipt in Pi when its host dies before returning the result", () =>
     Effect.gen(function* () {
-      const { host, store } = yield* setup();
-      yield* propose(host);
-      store.blobs.clear();
-      const missing = yield* host.view();
-      expect(missing).toMatchObject({
-        state: { status: "awaitingApproval" },
-        patch: null,
-        patchUnavailable: true,
+      let interrupted = false;
+      let resumedCommit: string | null = null;
+      const first = yield* setup({
+        wrapGitHub: (github, crash) => ({
+          ...github,
+          publish: (issue, binding, patch, journal) =>
+            Effect.gen(function* () {
+              const saved = yield* journal.read();
+              if (saved === null) {
+                yield* journal.save({
+                  binding,
+                  issue,
+                  author: {
+                    name: "bot",
+                    email: "bot@example.com",
+                    date: "2026-01-01T00:00:00Z",
+                  },
+                  message: "fixed message",
+                  title: "fixed title",
+                  body: "fixed body",
+                  baseTree: "tree",
+                  blobs: [],
+                  treeSha: "new-tree",
+                  commitSha: "committed-on-github",
+                  refCreated: false,
+                  pullRequest: null,
+                });
+                interrupted = true;
+                crash();
+                return yield* Effect.die(new Error("Process died after the durable receipt"));
+              }
+              resumedCommit = saved.commitSha;
+              return yield* github.publish(issue, binding, patch, journal);
+            }).pipe(
+              Effect.catchTag("GitHubError", (error) =>
+                Effect.fail(new PublishError({ kind: "ambiguous", message: error.message })),
+              ),
+            ),
+        }),
       });
-      expect(
-        yield* host.deliver(Events.Cancel.make({ actor: "ann" }), "cancel-after-blob-loss"),
-      ).toBe("applied");
-      expect((yield* host.view()).state.status).toBe("cancelled");
+      yield* first.host.deliver(labeled, "auto-crash-label");
+      yield* first.crashed;
+      const next = yield* first.open();
+      yield* next.host.drain();
+      expect(interrupted).toBe(true);
+      expect(resumedCommit).toBe("committed-on-github");
+      expect((yield* next.host.view()).state.status).toBe("published");
+      expect(first.github.state.pullRequests).toHaveLength(1);
     }),
   );
-
-  for (const policy of ["observe", "auto"] as const) {
-    it.effect(
-      `retains a ${policy} publish receipt in Pi when its host dies before returning the result`,
-      () =>
-        Effect.gen(function* () {
-          let interrupted = false;
-          let resumedCommit: string | null = null;
-          const first = yield* setup({
-            policy,
-            wrapGitHub: (github, crash) => ({
-              ...github,
-              publish: (issue, binding, patch, journal) =>
-                Effect.gen(function* () {
-                  const saved = yield* journal.read();
-                  if (saved === null) {
-                    yield* journal.save({
-                      binding,
-                      issue,
-                      author: {
-                        name: "bot",
-                        email: "bot@example.com",
-                        date: "2026-01-01T00:00:00Z",
-                      },
-                      message: "fixed message",
-                      title: "fixed title",
-                      body: "fixed body",
-                      baseTree: "tree",
-                      blobs: [],
-                      treeSha: "new-tree",
-                      commitSha: "committed-on-github",
-                      refCreated: false,
-                      pullRequest: null,
-                    });
-                    interrupted = true;
-                    crash();
-                    return yield* Effect.die(new Error("Process died after the durable receipt"));
-                  }
-                  resumedCommit = saved.commitSha;
-                  return yield* github.publish(issue, binding, patch, journal);
-                }).pipe(
-                  Effect.catchTag("GitHubError", (error) =>
-                    Effect.fail(new PublishError({ kind: "ambiguous", message: error.message })),
-                  ),
-                ),
-            }),
-          });
-          if (policy === "observe") {
-            const binding = yield* propose(first.host);
-            yield* first.host.deliver(Events.Approve.make({ actor: "ann", binding }), "approve");
-          } else yield* first.host.deliver(labeled, "auto-crash-label");
-          yield* first.crashed;
-          const next = yield* first.open();
-          yield* next.host.drain();
-          expect(interrupted).toBe(true);
-          expect(resumedCommit).toBe("committed-on-github");
-          expect((yield* next.host.view()).state.status).toBe("published");
-          expect(first.github.state.pullRequests).toHaveLength(1);
-        }),
-    );
-  }
   for (const crashAtCheckpoint of ["uploaded", "committed"] as const) {
     it.effect(
       `recovers after checkpoint ${crashAtCheckpoint}, before the tool result, and restores on a changed boot`,
@@ -399,7 +353,7 @@ describe("SessionHost", () => {
           const recovered = yield* first.open();
           yield* recovered.host.drain();
           const { state, patch } = yield* recovered.host.view();
-          expect(state.status).toBe("awaitingApproval");
+          expect(state.status).toBe("published");
           expect(patch?.files).toEqual([
             {
               path: "notes.txt",
@@ -435,8 +389,7 @@ describe("SessionHost", () => {
                 }),
                 { stopReason: "toolUse" },
               );
-        const binding = yield* propose(host);
-        yield* host.deliver(Events.Approve.make({ actor: "ann", binding }), "approve");
+        yield* propose(host);
         yield* host.drain();
         expect((yield* host.view()).state.status).toBe("published");
         expect(github.state.pullRequests[0]?.patch.files).toEqual([
@@ -467,7 +420,7 @@ describe("SessionHost", () => {
     }),
   );
 
-  it.effect("runs a labeled issue once, validates it, and waits for approval", () =>
+  it.effect("runs a labeled issue once, validates it, and publishes its changes", () =>
     Effect.gen(function* () {
       const { host, projection } = yield* setup();
 
@@ -477,7 +430,7 @@ describe("SessionHost", () => {
       yield* host.drain();
 
       const { state, patch } = yield* host.view();
-      expect(state).toMatchObject({ status: "awaitingApproval", runId: 1 });
+      expect(state).toMatchObject({ status: "published", runId: 1 });
       expect(patch?.files).toEqual([
         {
           path: "notes.txt",
@@ -489,63 +442,6 @@ describe("SessionHost", () => {
       expect(state.candidate?.binding.patchDigest).toBe(patch?.digest);
       expect(state.candidate?.evidence).toContain("(exit 0)");
       expect(projection.sessions.get("acme/app#7")?.revision).toBe(state.revision);
-    }),
-  );
-
-  it.effect("publishes an approved candidate as exactly one PR and links it once", () =>
-    Effect.gen(function* () {
-      const { host, github } = yield* setup();
-      const binding = yield* propose(host);
-
-      const approve = Events.Approve.make({ actor: "ann", binding });
-      expect(yield* host.deliver(approve, "approve-1")).toBe("applied");
-      expect(yield* host.deliver(approve, "approve-2")).toBe("duplicate");
-      yield* host.drain();
-
-      const { state } = yield* host.view();
-      expect(state).toMatchObject({ status: "published", decidedBy: "ann" });
-      expect(github.state.pullRequests).toHaveLength(1);
-      expect(github.state.pullRequests[0]).toMatchObject({
-        branch: "puchero/7-v1",
-        patch: { digest: binding.patchDigest },
-      });
-      expect(github.state.comments).toHaveLength(1);
-      expect(github.state.comments[0]?.text).toContain(state.pullRequest?.url);
-    }),
-  );
-
-  it.effect("refuses an approval for anything but the candidate shown", () =>
-    Effect.gen(function* () {
-      const { host, github } = yield* setup();
-      const binding = yield* propose(host);
-
-      const stale = Events.Approve.make({
-        actor: "ann",
-        binding: { ...binding, patchDigest: "other" },
-      });
-      expect(yield* host.deliver(stale, "approve-1")).toBe("stale");
-      yield* host.drain();
-
-      expect((yield* host.view()).state.status).toBe("awaitingApproval");
-      expect(github.state.pullRequests).toEqual([]);
-    }),
-  );
-
-  it.effect("replaces the candidate when input arrives while it awaits approval", () =>
-    Effect.gen(function* () {
-      const { host, github } = yield* setup();
-      const first = yield* propose(host);
-
-      yield* host.deliver(Events.UserInput.make({ text: "Use bullet points." }), "comment-1");
-      yield* host.drain();
-
-      const { state, patch } = yield* host.view();
-      expect(state.status).toBe("awaitingApproval");
-      expect(state.candidate?.binding).toMatchObject({ version: 2, runId: 2 });
-      expect(patch?.files[0]).toMatchObject({ content: Base64.encode("Use bullet points.\n") });
-      const late = Events.Approve.make({ actor: "ann", binding: first });
-      expect(yield* host.deliver(late, "approve-1")).toBe("stale");
-      expect(github.state.pullRequests).toEqual([]);
     }),
   );
 
@@ -565,7 +461,7 @@ describe("SessionHost", () => {
       yield* host.drain();
 
       const { state, patch } = yield* host.view();
-      expect(state.status).toBe("awaitingApproval");
+      expect(state.status).toBe("published");
       expect(state.candidate?.binding).toMatchObject({ runId: 2, version: 1 });
       expect(patch?.files[0]).toMatchObject({ content: Base64.encode("Use bullet points.\n") });
     }),
@@ -608,29 +504,12 @@ describe("SessionHost", () => {
     }),
   );
 
-  it.effect("reconciles a publish whose response was lost instead of repeating it", () =>
-    Effect.gen(function* () {
-      const { host, github } = yield* setup({
-        github: { dropResponses: { kind: "ambiguous", times: 1 } },
-      });
-      const binding = yield* propose(host);
-
-      yield* host.deliver(Events.Approve.make({ actor: "ann", binding }), "approve-1");
-      yield* host.drain();
-
-      expect((yield* host.view()).state.status).toBe("published");
-      expect(github.state.pullRequests).toHaveLength(1);
-    }),
-  );
-
   it.effect("fails visibly when the branch already holds something else", () =>
     Effect.gen(function* () {
       const { host, github } = yield* setup({
         github: { branches: [["puchero/7-v1", "someone-else"]] },
       });
-      const binding = yield* propose(host);
-
-      yield* host.deliver(Events.Approve.make({ actor: "ann", binding }), "approve-1");
+      yield* propose(host);
       yield* host.drain();
 
       const { state } = yield* host.view();
@@ -651,7 +530,7 @@ describe("SessionHost", () => {
       yield* next.host.drain();
 
       expect((yield* next.host.view()).state).toMatchObject({
-        status: "awaitingApproval",
+        status: "published",
         runId: 1,
       });
     }),
@@ -663,12 +542,11 @@ describe("SessionHost", () => {
       const { host, crash, crashed, open, github } = yield* setup({
         github: { afterPublish: () => crashOnPublish() },
       });
-      const binding = yield* propose(host);
       crashOnPublish = () => {
         crashOnPublish = () => {};
         crash();
       };
-      yield* host.deliver(Events.Approve.make({ actor: "ann", binding }), "approve-1");
+      yield* host.deliver(labeled, "delivery-1");
       yield* crashed;
 
       const next = yield* open();
@@ -706,7 +584,7 @@ describe("SessionHost", () => {
 
       expect(seen.some((text) => text.includes("interrupted"))).toBe(true);
       expect((yield* next.host.view()).state).toMatchObject({
-        status: "awaitingApproval",
+        status: "published",
         runId: 1,
       });
     }),

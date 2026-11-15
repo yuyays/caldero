@@ -2,7 +2,6 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/ht
 import { Schema } from "effect";
 import {
   CancelRequest,
-  DecisionRequest,
   DecisionResponse,
   InboxForbidden,
   InboxMediaType,
@@ -38,22 +37,6 @@ export class SessionsApi extends HttpApiGroup.make("sessions")
     HttpApiEndpoint.get("get", "/sessions/:sessionId", {
       params,
       success: SessionDetail,
-      error: errors,
-    }),
-  )
-  .add(
-    HttpApiEndpoint.post("approve", "/sessions/:sessionId/approve", {
-      params,
-      payload: DecisionRequest,
-      success: DecisionResponse,
-      error: errors,
-    }),
-  )
-  .add(
-    HttpApiEndpoint.post("reject", "/sessions/:sessionId/reject", {
-      params,
-      payload: DecisionRequest,
-      success: DecisionResponse,
       error: errors,
     }),
   )

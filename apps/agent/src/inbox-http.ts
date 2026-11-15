@@ -12,13 +12,7 @@ import {
   type SessionFault,
   type SessionView,
 } from "@puchero/contracts/inbox";
-import {
-  Events,
-  type DecisionResult,
-  type Policy,
-  type Repo,
-  type SessionEvent,
-} from "@puchero/domain";
+import { Events, type DecisionResult, type Repo, type SessionEvent } from "@puchero/domain";
 import { InboxAuth } from "./inbox-auth.ts";
 import { InboxStore } from "./inbox-store.ts";
 import { GitHub } from "./ports.ts";
@@ -52,7 +46,6 @@ export class InboxConfig extends Context.Service<
     readonly webhookSecret: string;
     readonly repo: Repo;
     readonly installationId: number;
-    readonly policy: Policy;
   }
 >()("puchero/InboxConfig") {}
 
@@ -118,16 +111,6 @@ const SessionRoutes = HttpApiBuilder.group(InboxApi, "sessions", (handlers) =>
           : { view, audit: audit.success };
       }),
     )
-    .handle("approve", ({ params, payload }) =>
-      act(params.sessionId, payload.requestId, "approve", (actor) =>
-        Events.Approve.make({ actor, binding: payload.binding }),
-      ),
-    )
-    .handle("reject", ({ params, payload }) =>
-      act(params.sessionId, payload.requestId, "reject", (actor) =>
-        Events.Reject.make({ actor, binding: payload.binding }),
-      ),
-    )
     .handle("cancel", ({ params, payload }) =>
       act(params.sessionId, payload.requestId, "cancel", (actor) => Events.Cancel.make({ actor })),
     )
@@ -182,7 +165,6 @@ const webhook = Effect.gen(function* () {
     return HttpServerResponse.text("Invalid webhook payload", { status: 400 });
   const payload = decoded.success;
   if (
-    config.policy === "off" ||
     payload.action !== "labeled" ||
     payload.label?.name !== "agent" ||
     payload.repository.full_name !== `${config.repo.owner}/${config.repo.name}` ||

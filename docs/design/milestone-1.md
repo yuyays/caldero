@@ -2,12 +2,12 @@
 
 # puchero milestone 1: issue → patch → approval → PR
 
-The later [automatic PR change](automatic-pr.md) adds `auto` alongside approval-required `observe`. That update
-supersedes the mandatory gate in the original milestone below; existing sessions keep their stored policy.
+The later [automatic PR change](automatic-pr.md) supersedes the approval gate in this historical milestone.
+Current behavior is issue → change → workspace checks pass → open PR. There is no approval-mode configuration.
+The original gate and its tests below describe the earlier design, not the current product.
 
-**Goal.** A GitHub issue labeled `agent` gets one durable session. An agent works on it in a sandbox and produces a
-validated, immutable patch. In `auto`, it opens the PR immediately after validation. In `observe`, it waits for a
-human to approve that exact patch in the inbox. Everything survives deploys, evictions, and container resets.
+**Goal.** A labeled issue gets one durable session that produces a validated immutable patch and opens a PR.
+Everything survives deploys, evictions and container resets. Review and merging happen on GitHub.
 
 Built on the spike's verdict ([spike-pi-do-container.md](../research/spike-pi-do-container.md)) and the
 [Open SWE comparison](../research/open-swe-comparison.md). Vocabulary follows `codebase-design`: module,

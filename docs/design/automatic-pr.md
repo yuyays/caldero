@@ -1,48 +1,44 @@
-# Automatic pull requests with optional approval
+# Automatic pull requests
 
-The agent should open a PR after validation by default. Human approval before opening the PR is optional.
-Merging remains a separate action. This changes the earlier milestone's mandatory publication gate.
+The agent makes the requested change, runs the configured sandbox checks, and opens a PR when they pass.
+There is no pre-publication approval mode or policy environment setting. Review and merging happen on GitHub;
+Puchero never merges automatically. GitHub CI may run after the PR opens.
 
 ## Approach
 
-Extend the existing session policy with `auto`, alongside `observe` (approval required) and `off` (no admission).
-`PUCHERO_POLICY` defaults to `auto` in local development. Real-service mode requires an explicit policy; set `auto`
-when connecting the GitHub App for automatic PR creation. Configure `observe` to keep the existing exact-binding
-review workflow. The policy is captured in the session when it is created; changing configuration does not change
-an existing session, including one already awaiting approval. `off` blocks new admissions; it is not a global kill
-switch for existing sessions. Stop is available only in eligible pre-publication states and is refused once
-publication starts, since a PR may already have landed. Auto mode deliberately removes the approval pause. There is no in-flight policy toggle in this change.
+The domain reducer owns publication. A successful `Validated` event for the current run freezes the candidate
+binding and validation evidence and atomically commits `publishing` plus one bound `Publish` instruction.
+Failed, repeated, and stale validation cannot start another publication. No synthetic human event or actor is recorded.
 
-The domain reducer owns the decision. After a successful `Validated` event for the current run, it freezes the
-candidate binding and evidence as usual. In `auto`, it commits `publishing` plus the existing `Publish` instruction
-in that same decision. It does not invent an `Approve` event or a human actor; `decidedBy` remains null. In `observe`,
-it keeps `awaitingApproval`. Failed validation and stale results cannot trigger publication.
+All new sessions use this flow. `PUCHERO_POLICY` is removed from deployment settings, admission, and the inbox.
+The approve/reject HTTP routes, client actions, and domain events are removed. The inbox shows progress, changes,
+validation evidence and the PR link; it retains additional instructions and Stop in eligible pre-publication states.
 
-Publication uses the existing Pi task, per-candidate journal, create-only branch, and reconciliation path. Ambiguous
-responses reconcile rather than issuing another publication. Input during publication still queues; every later
-candidate is validated again and has a new version. No merge endpoint or automatic merge is introduced.
-
-The inbox detail displays the session's actual policy and explains automatic PR creation. Automatic sessions do not offer
-Approve/Reject controls; Stop and additional instructions retain the reducer's existing eligibility rules. Existing
-manual approval and stale-binding behavior remain available through `observe`.
-
-The GitHub App's existing Contents/Issues/Pull requests write and Metadata read permissions are sufficient for
-this publication behavior. Its description can say: “Coding agent that opens pull requests, with optional human
-approval before publishing.” App registration, credentials, live App checks and deployment are separate tasks.
-
-## Acceptance criteria
-
-- A current successful validation in `auto` atomically produces the frozen candidate, `publishing`, and one bound
-  Publish instruction. `decidedBy` is null; repeated/stale validation cannot publish again.
-- In `observe`, validation still waits for an exact-binding human approval. `off` still blocks admission.
-- Failed validation never publishes; validation/run and publication retry limits remain unchanged.
-- A real SessionHost with local workspace, scripted model and FakeGitHub publishes from the issue label without
-  any approval event. A lost response reconciles to one PR; replay does not create another.
-- Configuration accepts all three modes, defaults local sessions to auto, and requires an explicit production policy. Existing observe sessions keep their policy.
-- The inbox identifies automatic sessions and offers no approval/rejection action for them; manual review still works.
+Publication reuses the Pi durable task, per-candidate journal, create-only branch, and reconciliation path. Lost
+responses reconcile instead of republishing. Input during publication queues, and the next candidate must validate
+again. Stop is refused after publishing starts because the remote outcome may already have landed.
 
 ## Compatibility
 
-No stored data is rewritten. New code reads existing `off`/`observe` sessions. Once an `auto` session has been saved,
-older versions that lack that policy value cannot decode it; rollback needs a version that understands `auto` or
-an explicit migration. Changing the new-session default back to `observe` does not convert saved sessions.
+Keep historical `policy`, `awaitingApproval`, `rejected`, and `decidedBy` fields readable in stored session JSON and
+D1 summaries. No stored state, active task, or publication journal is rewritten or reset. These legacy fields no
+longer select a publication mode. New sessions store `auto`; old environment policy values are ignored.
+
+An old `awaitingApproval` candidate stays paused and cannot publish from a replayed validation event. New instructions
+start run + 1 with a new candidate version; its successful validation publishes automatically. Stop can cancel the
+paused session. A legacy run already running or validating publishes its next successfully validated candidate.
+Already committed Publish/Reconcile tasks resume unchanged. Removing HTTP approval routes is a breaking client change;
+the bundled client is updated together. Older binaries that cannot decode `auto` still require a compatible rollback.
+
+## Acceptance criteria
+
+- Without a policy environment variable, a labeled issue runs checks and opens exactly one PR, with no human approver.
+- Failed checks never publish; late/repeated validation, retry limits, and reconciliation retain their guards.
+- A durable publish interrupted after a saved receipt resumes to one PR with the same receipt.
+- The inbox exposes progress, diff, evidence, PR link, instructions and eligible Stop; there is no approval action.
+- A legacy paused candidate stays inert; explicit new instructions create a fresh validated candidate that publishes.
+- Production still requires repository, installation, webhook/auth/model credentials and explicit check commands.
+
+The existing GitHub App permissions suffice: Contents, Issues and Pull requests write, Metadata read.
+App description: “Coding agent that opens pull requests after making changes and passing checks.”
+Live App checks, credentials and deployment remain separate tasks.

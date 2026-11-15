@@ -1,4 +1,4 @@
-import { ApprovalBinding, Repo, SessionState, Status } from "@puchero/domain";
+import { Repo, SessionState, Status } from "@puchero/domain";
 import { Schema } from "effect";
 
 /** A file's immutable contents; base64 preserves binary data in stored patches. */
@@ -77,10 +77,6 @@ export type SessionDetail = typeof SessionDetail.Type;
 export const DecisionResponse = Schema.Struct({
   result: Schema.Literals(["applied", "duplicate"]),
   view: SessionView,
-});
-export const DecisionRequest = Schema.Struct({
-  binding: ApprovalBinding,
-  requestId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
 });
 export const CancelRequest = Schema.Struct({
   requestId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),

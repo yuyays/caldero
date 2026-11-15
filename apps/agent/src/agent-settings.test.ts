@@ -15,7 +15,6 @@ describe("Agent configuration", () => {
           PUCHERO_REPO_NAME: "product",
           GITHUB_INSTALLATION_ID: "123",
           PUCHERO_CHECKS: '["pnpm test"]',
-          PUCHERO_POLICY: "auto",
           GITHUB_WEBHOOK_SECRET: "secret",
           ACCESS_ISSUER: "https://team.cloudflareaccess.com",
           ACCESS_AUDIENCE: "inbox",
@@ -31,7 +30,6 @@ describe("Agent configuration", () => {
           "PUCHERO_REPO_NAME",
           "GITHUB_INSTALLATION_ID",
           "PUCHERO_CHECKS",
-          "PUCHERO_POLICY",
         ]) {
           const missing = Object.fromEntries(
             Object.entries(production).filter(([name]) => name !== key),
@@ -56,11 +54,8 @@ describe("Agent configuration", () => {
           GITHUB_WEBHOOK_SECRET: "fixture-secret",
         };
         expect(yield* settings(local)).toMatchObject({
-          policy: "auto",
           auth: { mode: "dev", token: "local" },
         });
-        expect((yield* settings({ ...local, PUCHERO_POLICY: "observe" })).policy).toBe("observe");
-        expect((yield* settings({ ...local, PUCHERO_POLICY: "off" })).policy).toBe("off");
         for (const env of [
           {},
           { ...local, PUCHERO_MODE: "production", PUCHERO_ORIGIN: "https://inbox.example.com" },
@@ -77,7 +72,6 @@ describe("Agent configuration", () => {
             PUCHERO_REPO_NAME: "repo",
             GITHUB_INSTALLATION_ID: "12",
             PUCHERO_CHECKS: '["pnpm test"]',
-            PUCHERO_POLICY: "auto",
             GITHUB_WEBHOOK_SECRET: "secret",
             PUCHERO_ORIGIN: "https://inbox.example.com",
             ACCESS_ISSUER: "https://team.cloudflareaccess.com",

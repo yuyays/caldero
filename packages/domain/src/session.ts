@@ -4,7 +4,7 @@ import { Schema } from "effect";
 export const Repo = Schema.Struct({ owner: Schema.String, name: Schema.String });
 export type Repo = typeof Repo.Type;
 
-/** The exact candidate a publication or approval is bound to. */
+/** The exact candidate bound to publication. Historical name retained for stored journals. */
 export const ApprovalBinding = Schema.Struct({
   sessionId: Schema.String,
   version: Schema.Int,
@@ -29,6 +29,7 @@ export const Status = Schema.Literals([
 ]);
 export type Status = typeof Status.Type;
 
+/** Historical values remain readable; all new sessions publish automatically. */
 export const Policy = Schema.Literals(["off", "observe", "auto"]);
 export type Policy = typeof Policy.Type;
 
@@ -72,8 +73,6 @@ export const SessionEvent = Schema.TaggedUnion({
   Validated: { runId: Schema.Int, patchDigest: Schema.String, evidence: Schema.String },
   ValidationFailed: { runId: Schema.Int, evidence: Schema.String },
   RunFailed: { runId: Schema.Int, reason: Schema.String },
-  Approve: { actor: Schema.String, binding: ApprovalBinding },
-  Reject: { actor: Schema.String, binding: ApprovalBinding },
   Cancel: { actor: Schema.String },
   PublishSucceeded: { number: Schema.Int, url: Schema.String },
   PublishFailed: {
@@ -102,16 +101,6 @@ export const Instruction = Schema.TaggedUnion({
 });
 export type Instruction = typeof Instruction.Type;
 
-const sameBinding = (a: ApprovalBinding, b: ApprovalBinding) =>
-  a.sessionId === b.sessionId &&
-  a.version === b.version &&
-  a.runId === b.runId &&
-  a.repo.owner === b.repo.owner &&
-  a.repo.name === b.repo.name &&
-  a.baseSha === b.baseSha &&
-  a.baseRef === b.baseRef &&
-  a.patchDigest === b.patchDigest;
-
 /** `applied` changed the session; `duplicate` repeats what already happened; `stale` was refused. */
 export type DecisionResult = "applied" | "duplicate" | "stale";
 
@@ -128,10 +117,10 @@ export const initialSession = (init: {
   sessionId: string;
   repo: Repo;
   issue: number;
-  policy: Policy;
 }): SessionState =>
   SessionState.make({
     ...init,
+    policy: "auto",
     status: "idle",
     revision: 0,
     runId: 0,
@@ -185,11 +174,6 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
 
   const isCurrentRun = (runId: number, ...statuses: ReadonlyArray<Status>) =>
     runId === state.runId && statuses.includes(state.status);
-  /** The current candidate's binding, when `binding` names exactly that candidate. */
-  const matchesCandidate = (binding: ApprovalBinding) => {
-    const current = state.candidate?.binding;
-    return current !== undefined && sameBinding(current, binding);
-  };
   /** Settles a publish; input held meanwhile starts the next run. */
   const settle = (
     change: Partial<SessionState>,
@@ -213,7 +197,6 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
 
   return SessionEvent.match(event, {
     IssueLabeled: ({ context, baseSha, baseRef }) => {
-      if (state.policy === "off") return unchanged("stale");
       if (state.status !== "idle") return unchanged("duplicate");
       return applied({ status: "running", runId: 1, baseSha, baseRef }, [
         submit(1, "start", context),
@@ -256,17 +239,14 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
         baseRef: state.baseRef,
         patchDigest,
       };
-      const automatic = state.policy === "auto";
       return applied(
         {
-          status: automatic ? "publishing" : "awaitingApproval",
+          status: "publishing",
           version,
           attempts: 0,
           candidate: { binding, evidence },
         },
-        automatic
-          ? [(instructionId) => Instruction.cases.Publish.make({ instructionId, binding })]
-          : [],
+        [(instructionId) => Instruction.cases.Publish.make({ instructionId, binding })],
       );
     },
     ValidationFailed: ({ runId, evidence }) => {
@@ -282,23 +262,6 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
         `The previous attempt failed (${reason}). Continue the task.`,
         `Run failed: ${reason}`,
       );
-    },
-    Approve: ({ actor, binding }) => {
-      if (state.policy !== "observe") return unchanged("stale");
-      if (!matchesCandidate(binding)) return unchanged("stale");
-      if (state.status === "publishing" || state.status === "published")
-        return unchanged("duplicate");
-      if (state.status !== "awaitingApproval") return unchanged("stale");
-      return applied({ status: "publishing", attempts: 0, decidedBy: actor }, [
-        (instructionId) => Instruction.cases.Publish.make({ instructionId, binding }),
-      ]);
-    },
-    Reject: ({ actor, binding }) => {
-      if (state.policy !== "observe") return unchanged("stale");
-      if (!matchesCandidate(binding)) return unchanged("stale");
-      if (state.status === "rejected") return unchanged("duplicate");
-      if (state.status !== "awaitingApproval") return unchanged("stale");
-      return applied({ status: "rejected", decidedBy: actor });
     },
     Cancel: ({ actor }) => {
       switch (state.status) {

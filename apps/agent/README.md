@@ -29,11 +29,10 @@ console.log(response.status);
 JS
 ```
 
-By default, a new local session writes and checks `notes.txt`, then opens a fake PR automatically. Set
-`PUCHERO_POLICY=observe` before starting the agent to exercise the approval-required flow. The inbox shows its diff, digest,
-base, version and validation evidence. In approval-required mode, Approve opens the fake PR. Repeating the delivery ID does not change the
-session. Reject/Stop ask for confirmation; sending instructions while awaiting approval explicitly replaces the
-candidate. A stale decision returns HTTP 409 with the fresh session; the page displays it before another decision.
+A new local session writes and checks `notes.txt`, then opens a fake PR automatically. The inbox shows its diff,
+digest, base, version and validation evidence. Repeating the delivery ID does not change the session. Stop asks
+for confirmation and is available before publication starts. New instructions steer work; in a legacy paused
+session they explicitly replace the old candidate with a fresh run.
 The unauthenticated `/s/:name/deliver` development route has been removed.
 
 `pnpm dev:web` supports frontend editing on port 5173, proxying `/api` to the agent on 1337. Set
@@ -45,19 +44,18 @@ as the Worker and needs no `VITE_API_URL`. Local tokens stay in page memory, nev
 Production is the default mode. Set these environment inputs before running Alchemy; the Worker declares each as
 an explicit binding and marks credentials redacted. Keep secrets out of git and the sandbox.
 
-| Setting                                   | Value                                                                                                                                               |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PUCHERO_ORIGIN`                          | Exact HTTPS inbox origin, no trailing slash                                                                                                         |
-| `PUCHERO_REPO_OWNER`, `PUCHERO_REPO_NAME` | One configured repository                                                                                                                           |
-| `PUCHERO_POLICY`                          | Required in real-service mode: `auto` opens PRs after validation, `observe` requires approval, `off` blocks new admissions. Dev defaults to `auto`. |
-| `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID` | Installed GitHub App identity                                                                                                                       |
-| `GITHUB_PRIVATE_KEY`                      | Secret PEM App key                                                                                                                                  |
-| `GITHUB_WEBHOOK_SECRET`                   | Secret matching GitHub's webhook configuration                                                                                                      |
-| `ACCESS_ISSUER`                           | Team issuer, e.g. `https://team.cloudflareaccess.com`                                                                                               |
-| `ACCESS_AUDIENCE`                         | This Access application's audience                                                                                                                  |
-| `ACCESS_APPROVERS`                        | JSON map of verified email to GitHub login, e.g. `{"ann@example.com":"ann"}`                                                                        |
-| `OPENAI_API_KEY`, `PUCHERO_MODEL`         | Secret API key and explicit OpenAI model ID                                                                                                         |
-| `PUCHERO_CHECKS`                          | Nonempty JSON array of validation commands baked into the sandbox's environment                                                                     |
+| Setting                                   | Value                                                                           |
+| ----------------------------------------- | ------------------------------------------------------------------------------- |
+| `PUCHERO_ORIGIN`                          | Exact HTTPS inbox origin, no trailing slash                                     |
+| `PUCHERO_REPO_OWNER`, `PUCHERO_REPO_NAME` | One configured repository                                                       |
+| `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID` | Installed GitHub App identity                                                   |
+| `GITHUB_PRIVATE_KEY`                      | Secret PEM App key                                                              |
+| `GITHUB_WEBHOOK_SECRET`                   | Secret matching GitHub's webhook configuration                                  |
+| `ACCESS_ISSUER`                           | Team issuer, e.g. `https://team.cloudflareaccess.com`                           |
+| `ACCESS_AUDIENCE`                         | This Access application's audience                                              |
+| `ACCESS_APPROVERS`                        | JSON map of verified email to GitHub login, e.g. `{"ann@example.com":"ann"}`    |
+| `OPENAI_API_KEY`, `PUCHERO_MODEL`         | Secret API key and explicit OpenAI model ID                                     |
+| `PUCHERO_CHECKS`                          | Nonempty JSON array of validation commands baked into the sandbox's environment |
 
 Configure an Access application for the inbox/API. Exclude `/webhooks/github` from Access so GitHub can reach it;
 the Worker authenticates that route with HMAC on the original bytes. Subscribe to issue events. Only `labeled`,
@@ -78,7 +76,7 @@ with no Access configuration. Missing production authentication, webhook or App/
 
 Session detail degrades independently: a failed audit read returns an empty activity list with an unavailable flag,
 and a missing/corrupt patch blob returns the authoritative state with a patch-unavailable flag. The UI explains
-these failures and allows stopping the session; it never enables approval without the displayed frozen patch.
+these failures and keeps Stop available in eligible pre-publication states.
 
 D1 migrations live in `migrations/`. D1 stores bounded summaries and revision activity, never file contents or
 validation output. `Project` carries its committed revision's immutable snapshot, so retries cannot relabel a newer
@@ -101,10 +99,10 @@ checkpoint crash windows. No test or dev command deploys Cloudflare resources.
 `GitHubApp.layer` / `GitHubApp.make` in `src/github-app.ts` implements the GitHub seam. Configure one repository,
 App ID, installation ID, PEM private key, and commit author. Installation tokens are minted per operation with
 repository-scoped Contents, Pull requests and Issues write permissions. Keep the private key in the host; the adapter
-returns file bytes, never credentials, to `Workspace`. Explicit local mode uses FakeGitHub; production connects this adapter to verified admission and the review API.
+returns file bytes, never credentials, to `Workspace`. Explicit local mode uses FakeGitHub; production connects this adapter to verified admission and the session API.
 
 `fetchIssueContext` returns the issue, paginated comments, root `AGENTS.md`, default branch name and its captured
-commit. Pass these into `IssueLabeled`. Approvals now include `baseRef`; previously saved development sessions without
+commit. Pass these into `IssueLabeled`. Candidate bindings include `baseRef`; previously saved development sessions without
 that field are incompatible and must use a fresh session name. Source fetches use the Git tree/blob APIs with bounded
 concurrency; truncated trees, symlinks and submodules fail explicitly. Tarball streaming remains future work.
 
@@ -143,14 +141,15 @@ also accepts `apiUrl` for GitHub Enterprise or a local contract peer; no credent
 
 ## Automatic publication
 
-Set `PUCHERO_POLICY=auto` for the intended real-service run. Human approval before opening a PR is optional:
-`observe` retains the exact-binding approval screen, and `off` prevents new admissions. The detail view identifies
-the saved session's mode; the D1 navigation summary does not carry policy. Approval/rejection endpoints refuse auto
-sessions. The model still cannot declare validation successful; only the workspace validation outcome starts publication.
+Every new session opens its PR automatically after the configured `PUCHERO_CHECKS` pass in the sandbox. There is
+no approval-mode setting or approve/reject action. The model cannot declare validation successful; only the
+workspace validation outcome starts publication. GitHub CI can run after the PR opens. Review and merging happen
+on GitHub; Puchero never merges automatically.
 
-Policy is frozen when a session is created. Existing observe sessions keep waiting for approval after an upgrade or
-configuration change. Likewise, setting the environment to off does not stop existing auto sessions. Stop works only
-before publication begins; once publishing starts, its remote outcome may already have landed. This change creates
-PRs automatically but never merges them. See [automatic PR design](../../docs/design/automatic-pr.md) for acceptance
-criteria and rollback compatibility. Your existing GitHub App permissions remain sufficient; no additional scopes
-are requested for automatic publication.
+Stop works before publication begins. Once publishing starts, its remote outcome may already have landed.
+Historical state fields remain readable without rewriting stored documents or task journals. A legacy session
+paused in `awaitingApproval` stays paused until new instructions create a fresh run, or Stop cancels it. Its old
+candidate is never published merely by upgrading. An already running legacy session publishes its next successfully
+validated candidate automatically. `PUCHERO_POLICY` has been removed and any old environment value is ignored.
+See [automatic PR design](../../docs/design/automatic-pr.md) for acceptance criteria and rollback compatibility.
+Existing GitHub App permissions remain sufficient; no additional scopes are requested.

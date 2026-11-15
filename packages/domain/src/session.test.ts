@@ -1,17 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
-import {
-  decide,
-  type Decision,
-  Events,
-  initialSession,
-  type Policy,
-  type SessionEvent,
-} from "./session.ts";
+import { decide, type Decision, Events, initialSession, type SessionEvent } from "./session.ts";
 
 const now = 1_800_000_000_000;
 const repo = { owner: "acme", name: "shop" };
-const fresh = (policy: Policy = "observe") =>
-  initialSession({ sessionId: "github:acme/shop#7", repo, issue: 7, policy });
+const fresh = () => initialSession({ sessionId: "github:acme/shop#7", repo, issue: 7 });
 
 /** Applies events in order, returning the last decision. */
 const run = (events: ReadonlyArray<SessionEvent>, start = fresh()) => {
@@ -42,11 +34,10 @@ const cancel = Events.Cancel.make({ actor: "yuyays" });
 const publishFailed = (kind: "retryable" | "permanent" | "ambiguous") =>
   Events.PublishFailed.make({ kind, message: `${kind} failure` });
 const input = (text: string) => Events.UserInput.make({ text });
-const approve = (binding = firstBinding) => Events.Approve.make({ actor: "yuyays", binding });
 
 describe("decide", () => {
   it("publishes a validated frozen candidate automatically without recording a human approval", () => {
-    const automatic = fresh("auto");
+    const automatic = fresh();
     const decision = run(proposed, automatic);
     expect(decision.state).toMatchObject({
       status: "publishing",
@@ -70,21 +61,8 @@ describe("decide", () => {
     expect(repeated.instructions).toEqual([]);
   });
 
-  it("refuses human approve and reject actions for automatic sessions", () => {
-    const automatic = run(proposed, fresh("auto")).state;
-    for (const event of [
-      approve(),
-      Events.Reject.make({ actor: "someone", binding: firstBinding }),
-    ]) {
-      const decision = decide(automatic, event, now);
-      expect(decision.result).toBe("stale");
-      expect(decision.state).toBe(automatic);
-      expect(decision.instructions).toEqual([]);
-      expect(decision.state.decidedBy).toBeNull();
-    }
-  });
   it("never publishes failed or stale auto validation and validates queued input as a new candidate", () => {
-    const automatic = fresh("auto");
+    const automatic = fresh();
     const failed = run(
       [labeled, answered(1), Events.ValidationFailed.make({ runId: 1, evidence: "tests failed" })],
       automatic,
@@ -127,7 +105,7 @@ describe("decide", () => {
       revision: 1,
       runId: 1,
     });
-    const later = run([...proposed, approve()]);
+    const later = run([...proposed]);
     expect(later.state.status).toBe("publishing");
     expect(JSON.parse(projected.snapshot).status).toBe("running");
   });
@@ -144,13 +122,6 @@ describe("decide", () => {
     expect(instructions[0]).toMatchObject({ runId: 1, mode: "start", text: "Fix the login bug" });
   });
 
-  it("ignores a labeled issue in a repo whose policy is off", () => {
-    const { state, instructions, result } = run([labeled], fresh("off"));
-    expect(result).toBe("stale");
-    expect(state.status).toBe("idle");
-    expect(instructions).toEqual([]);
-  });
-
   it("validates a run once it answers, and ignores answers from other runs", () => {
     const validating = run([labeled, Events.RunAnswered.make({ runId: 1 })]);
     expect(validating.state.status).toBe("validating");
@@ -160,48 +131,6 @@ describe("decide", () => {
     const other = run([labeled, Events.RunAnswered.make({ runId: 9 })]);
     expect(other.result).toBe("stale");
     expect(other.state.status).toBe("running");
-  });
-
-  it("proposes version 1, bound to its run, base and digest, once validation passes", () => {
-    const { state, instructions } = run(proposed);
-    expect(state.status).toBe("awaitingApproval");
-    expect(state.version).toBe(1);
-    expect(state.candidate?.binding).toEqual(firstBinding);
-    expect(instructions).toMatchObject([{ _tag: "Project" }]);
-  });
-
-  it("publishes the approved binding exactly once", () => {
-    const approved = run([...proposed, approve()]);
-    expect(approved.result).toBe("applied");
-    expect(approved.state.status).toBe("publishing");
-    expect(approved.instructions[0]).toMatchObject({ _tag: "Publish", binding: firstBinding });
-
-    const repeated = run([...proposed, approve(), approve()]);
-    expect(repeated.result).toBe("duplicate");
-    expect(repeated.instructions).toEqual([]);
-  });
-
-  it.each([
-    ["an older version", { ...firstBinding, version: 0 }],
-    ["another digest", { ...firstBinding, patchDigest: "sha256:bbb" }],
-    ["another base", { ...firstBinding, baseSha: "base0" }],
-    ["another base branch", { ...firstBinding, baseRef: "release" }],
-    ["another run", { ...firstBinding, runId: 2 }],
-  ])("refuses an approval for %s", (_case, binding) => {
-    const { state, instructions, result } = run([...proposed, approve(binding)]);
-    expect(result).toBe("stale");
-    expect(state.status).toBe("awaitingApproval");
-    expect(instructions).toEqual([]);
-  });
-
-  it("refuses an approval before anything is proposed, and after a rejection", () => {
-    expect(run([labeled, approve()]).result).toBe("stale");
-    const rejected = run([
-      ...proposed,
-      Events.Reject.make({ actor: "yuyays", binding: firstBinding }),
-    ]);
-    expect(rejected.state.status).toBe("rejected");
-    expect(decide(rejected.state, approve(), now).result).toBe("stale");
   });
 
   it("steers the current run with input that arrives while it is running", () => {
@@ -216,10 +145,7 @@ describe("decide", () => {
     });
   });
 
-  it.each([
-    ["validating", [labeled, answered(1)]],
-    ["awaiting approval", proposed],
-  ])(
+  it.each([["validating", [labeled, answered(1)]]])(
     "starts a new run when input arrives while %s, and ignores the old run's late result",
     (_case, before) => {
       const restarted = run([...before, input("use the new API instead")]);
@@ -232,17 +158,16 @@ describe("decide", () => {
       expect(late.result).toBe("stale");
 
       const next = run([answered(2), validated(2, "sha256:new")], restarted.state);
-      expect(next.state.status).toBe("awaitingApproval");
+      expect(next.state.status).toBe("publishing");
       expect(next.state.candidate?.binding).toMatchObject({
         version: 1 + restarted.state.version,
         runId: 2,
       });
-      expect(decide(next.state, approve(), now).result).toBe("stale");
     },
   );
 
   it("holds input that arrives while publishing", () => {
-    const { state, instructions } = run([...proposed, approve(), input("rename the button")]);
+    const { state, instructions } = run([...proposed, input("rename the button")]);
     expect(state.status).toBe("publishing");
     expect(state.queued).toEqual(["rename the button"]);
     expect(instructions).toMatchObject([{ _tag: "Project" }]);
@@ -292,21 +217,15 @@ describe("decide", () => {
     expect(decide(cancelled.state, cancel, now).result).toBe("duplicate");
   });
 
-  it("cancels a proposal without aborting anything", () => {
-    const { state, instructions } = run([...proposed, cancel]);
-    expect(state.status).toBe("cancelled");
-    expect(instructions).toMatchObject([{ _tag: "Project" }]);
-  });
-
   it("refuses to cancel while publishing", () => {
-    const { state, result } = run([...proposed, approve(), cancel]);
+    const { state, result } = run([...proposed, cancel]);
     expect(result).toBe("stale");
     expect(state.status).toBe("publishing");
   });
 
   it("records the pull request and comments on the issue once publishing succeeds", () => {
     const pr = { number: 42, url: "https://github.com/acme/shop/pull/42" };
-    const { state, instructions } = run([...proposed, approve(), Events.PublishSucceeded.make(pr)]);
+    const { state, instructions } = run([...proposed, Events.PublishSucceeded.make(pr)]);
     expect(state.status).toBe("published");
     expect(state.pullRequest).toEqual(pr);
     expect(instructions[0]).toMatchObject({ _tag: "Comment", key: "published:v1" });
@@ -314,20 +233,19 @@ describe("decide", () => {
   });
 
   it("reconciles instead of publishing again when the outcome is unknown", () => {
-    const { state, instructions } = run([...proposed, approve(), publishFailed("ambiguous")]);
+    const { state, instructions } = run([...proposed, publishFailed("ambiguous")]);
     expect(state.status).toBe("publishing");
     expect(instructions[0]).toMatchObject({ _tag: "Reconcile", binding: firstBinding });
   });
 
   it("retries a retryable publish with a new instruction, then fails after the limit", () => {
-    const once = run([...proposed, approve(), publishFailed("retryable")]);
+    const once = run([...proposed, publishFailed("retryable")]);
     expect(once.instructions[0]).toMatchObject({ _tag: "Publish", binding: firstBinding });
-    const first = run([...proposed, approve()]).instructions[0];
+    const first = run([...proposed]).instructions[0];
     expect(once.instructions[0]?.instructionId).not.toBe(first?.instructionId);
 
     const exhausted = run([
       ...proposed,
-      approve(),
       publishFailed("retryable"),
       publishFailed("retryable"),
       publishFailed("retryable"),
@@ -336,7 +254,7 @@ describe("decide", () => {
   });
 
   it("fails at once on a permanent publish failure", () => {
-    const { state } = run([...proposed, approve(), publishFailed("permanent")]);
+    const { state } = run([...proposed, publishFailed("permanent")]);
     expect(state.status).toBe("failed");
     expect(state.failure).toContain("permanent failure");
   });
@@ -354,7 +272,6 @@ describe("decide", () => {
   it("fails instead of reconciling forever when the publish outcome stays unknown", () => {
     const { state } = run([
       ...proposed,
-      approve(),
       publishFailed("ambiguous"),
       publishFailed("ambiguous"),
       publishFailed("ambiguous"),
@@ -367,7 +284,6 @@ describe("decide", () => {
     const pr = { number: 42, url: "https://github.com/acme/shop/pull/42" };
     const { state, instructions } = run([
       ...proposed,
-      approve(),
       input("rename the button"),
       Events.PublishSucceeded.make(pr),
     ]);
@@ -382,12 +298,24 @@ describe("decide", () => {
     ]);
   });
 
-  it("records who approved, rejected or cancelled", () => {
-    expect(run([...proposed, approve()]).state.decidedBy).toBe("yuyays");
-    const rejected = Events.Reject.make({ actor: "reviewer2", binding: firstBinding });
-    expect(run([...proposed, rejected]).state.decidedBy).toBe("reviewer2");
+  it("records who stopped the session", () => {
     expect(run([labeled, Events.Cancel.make({ actor: "reviewer3" })]).state.decidedBy).toBe(
       "reviewer3",
     );
+  });
+
+  it("keeps a legacy paused candidate inert until new instructions create a validated replacement", () => {
+    const legacy = {
+      ...run(proposed).state,
+      policy: "observe" as const,
+      status: "awaitingApproval" as const,
+    };
+    expect(decide(legacy, validated(1, "sha256:aaa"), now).result).toBe("stale");
+    const next = run([input("Use the new API"), answered(2), validated(2, "sha256:new")], legacy);
+    expect(next.state).toMatchObject({ status: "publishing", version: 2, decidedBy: null });
+    expect(next.instructions[0]).toMatchObject({
+      _tag: "Publish",
+      binding: { version: 2, patchDigest: "sha256:new" },
+    });
   });
 });

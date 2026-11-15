@@ -6,7 +6,6 @@ import {
   StaleDecision,
   SessionFault,
   InboxUnavailable,
-  type DecisionRequest,
   type SessionView,
 } from "@puchero/contracts/inbox";
 import { Effect, Schema } from "effect";
@@ -48,25 +47,21 @@ export const detailQuery = (sessionId: string) =>
       sessionFault(query.state.error) || overloaded(query.state.error) ? false : 3000,
     retry: false,
   });
-export type Action = "approve" | "reject" | "cancel" | "input";
+export type Action = "cancel" | "input";
 export interface Decision {
   action: Action;
   view: SessionView;
   requestId: string;
   text?: string;
 }
-/** Each click binds its request to the candidate actually displayed, never a later background result. */
+/** Session controls use stable request IDs so a retried click is deduplicated. */
 export const decideSession = ({ action, view, requestId, text }: Decision) => {
   const params = { sessionId: view.state.sessionId };
   if (action === "cancel")
     return Effect.runPromise(client.sessions.cancel({ params, payload: { requestId } }));
-  if (action === "input")
-    return Effect.runPromise(
-      client.sessions.input({ params, payload: { requestId, text: text ?? "" } }),
-    );
-  if (view.state.candidate === null) return Promise.reject(new Error("Review a candidate first"));
-  const payload: typeof DecisionRequest.Type = { binding: view.state.candidate.binding, requestId };
-  return Effect.runPromise(client.sessions[action]({ params, payload }));
+  return Effect.runPromise(
+    client.sessions.input({ params, payload: { requestId, text: text ?? "" } }),
+  );
 };
 export const staleDecision = Schema.is(StaleDecision);
 export const sessionFault = Schema.is(SessionFault);
