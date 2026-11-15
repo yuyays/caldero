@@ -25,6 +25,11 @@ describe("Agent configuration", () => {
           installationId: 123,
           checks: ["pnpm test"],
         });
+        expect(yield* settings({ ...production, PUCHERO_POLICY: "off" })).toMatchObject({
+          repo: { owner: "team", name: "product" },
+          installationId: 123,
+          checks: ["pnpm test"],
+        });
         for (const key of [
           "PUCHERO_REPO_OWNER",
           "PUCHERO_REPO_NAME",

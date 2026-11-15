@@ -54,7 +54,7 @@ export interface Decision {
   requestId: string;
   text?: string;
 }
-/** Session controls use stable request IDs so a retried click is deduplicated. */
+/** Forward each control request's ID for server-side deduplication on redelivery. */
 export const decideSession = ({ action, view, requestId, text }: Decision) => {
   const params = { sessionId: view.state.sessionId };
   if (action === "cancel")

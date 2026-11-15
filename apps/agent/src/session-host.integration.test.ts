@@ -262,6 +262,27 @@ describe("SessionHost", () => {
       }),
   );
 
+  it.effect("keeps published session details available when its frozen patch blob is lost", () =>
+    Effect.gen(function* () {
+      const { host, store, github } = yield* setup();
+      const binding = yield* propose(host);
+      store.blobs.clear();
+      const missing = yield* host.view();
+      expect(missing).toMatchObject({
+        state: {
+          status: "published",
+          candidate: { binding },
+          pullRequest: { url: "https://github.test/pull/100" },
+        },
+        patch: null,
+        patchUnavailable: true,
+      });
+      expect(yield* host.deliver(Events.Cancel.make({ actor: "ann" }), "late-stop")).toBe("stale");
+      expect((yield* host.view()).state.status).toBe("published");
+      expect(github.state.pullRequests).toHaveLength(1);
+    }),
+  );
+
   it.effect("retains a publish receipt in Pi when its host dies before returning the result", () =>
     Effect.gen(function* () {
       let interrupted = false;

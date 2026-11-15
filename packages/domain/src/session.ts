@@ -33,7 +33,7 @@ export type Status = typeof Status.Type;
 export const Policy = Schema.Literals(["off", "observe", "auto"]);
 export type Policy = typeof Policy.Type;
 
-/** A validated, frozen patch bound to its publication or optional approval. */
+/** A validated, frozen patch bound to publication. */
 export const Candidate = Schema.Struct({
   binding: ApprovalBinding,
   evidence: Schema.String,

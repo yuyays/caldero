@@ -184,7 +184,7 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
           auditUnavailable: old?.auditUnavailable ?? false,
         }));
         setNotice(
-          "The candidate changed. Review the current patch and evidence before deciding again.",
+          "The session changed. Check its current progress before sending another request.",
         );
         setConfirm(null);
       } else setNotice(inboxError(error));
@@ -229,7 +229,7 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
             <ExternalLink size={14} aria-hidden="true" />
           </a>
         </div>
-        <span className={`rounded-md px-3 py-2 text-sm font-medium bg-stone-100 text-stone-800`}>
+        <span className="rounded-md bg-stone-100 px-3 py-2 text-sm font-medium text-stone-800">
           {statusLabel[state.status]}
         </span>
       </div>
@@ -240,7 +240,8 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
       </div>
       {auditUnavailable && (
         <p className="mt-4 text-sm text-amber-900">
-          Activity history is unavailable. You can still review and decide on this session.
+          Activity history is unavailable. Current progress and eligible session controls remain
+          available.
         </p>
       )}
       {state.failure && (
