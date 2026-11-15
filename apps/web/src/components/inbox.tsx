@@ -10,6 +10,7 @@ import {
   sessionsQuery,
   setLocalToken,
   staleDecision,
+  sessionFault,
   viewerQuery,
   type Action,
   type Decision,
@@ -158,6 +159,7 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
   const [input, setInput] = useState("");
   const decision = useMutation({
     mutationFn: decideSession,
+    retry: false,
     onSuccess: (result) => {
       cache.setQueryData(detailQuery(sessionId).queryKey, (old: SessionDetail | undefined) => ({
         view: result.view,
@@ -193,15 +195,17 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
     return (
       <section role="alert" className="rounded-xl bg-amber-50 p-6 text-amber-950">
         {inboxError(detail.error)}{" "}
-        <Button className="ml-2" variant="outline" onClick={() => void detail.refetch()}>
-          Retry session
-        </Button>
+        {!sessionFault(detail.error) && (
+          <Button className="ml-2" variant="outline" onClick={() => void detail.refetch()}>
+            Retry session
+          </Button>
+        )}
       </section>
     );
   const { view, audit, auditUnavailable } = detail.data;
   const { state, patch } = view;
   const candidate = state.candidate;
-  const pending = decision.isPending || detail.isFetching;
+  const blocked = decision.isPending || detail.isFetching || sessionFault(decision.error);
   const reviewable =
     state.status === "awaitingApproval" &&
     candidate !== null &&
@@ -325,21 +329,21 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
           Approving opens a pull request with the exact candidate shown above.
         </p>
         <div className="flex flex-wrap gap-3">
-          <Button disabled={!reviewable || pending} onClick={() => act("approve")}>
+          <Button disabled={!reviewable || blocked} onClick={() => act("approve")}>
             {decision.isPending && decision.variables.action === "approve"
               ? "Approving…"
               : "Approve & open PR"}
           </Button>
           <Button
             variant="outline"
-            disabled={!reviewable || pending}
+            disabled={!reviewable || blocked}
             onClick={() => setConfirm("reject")}
           >
             Reject candidate
           </Button>
           <Button
             variant="outline"
-            disabled={!cancellable || pending}
+            disabled={!cancellable || blocked}
             onClick={() => setConfirm("cancel")}
           >
             Stop session
@@ -352,13 +356,13 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
                 ? "Reject this candidate? It will not be published."
                 : "Stop this session and discard its pending work?"}
             </p>
-            <Button disabled={pending} onClick={() => act(confirm)}>
+            <Button disabled={blocked} onClick={() => act(confirm)}>
               Confirm {confirm === "reject" ? "rejection" : "stop"}
             </Button>
             <Button
               className="ml-2"
               variant="outline"
-              disabled={pending}
+              disabled={blocked}
               onClick={() => setConfirm(null)}
             >
               Keep reviewing
@@ -405,7 +409,7 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
             type="submit"
             variant="outline"
             className="mt-3"
-            disabled={pending || !input.trim()}
+            disabled={blocked || !input.trim()}
           >
             {confirm === "input" ? "Replace candidate & send" : "Send instructions"}
           </Button>

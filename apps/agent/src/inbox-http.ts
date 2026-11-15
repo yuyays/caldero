@@ -9,6 +9,7 @@ import {
   InboxNotFound,
   InboxUnavailable,
   StaleDecision,
+  type SessionFault,
   type SessionView,
 } from "@puchero/contracts/inbox";
 import { Events, type DecisionResult, type Repo, type SessionEvent } from "@puchero/domain";
@@ -19,20 +20,22 @@ import { GitHub } from "./ports.ts";
 export class Sessions extends Context.Service<
   Sessions,
   {
-    readonly read: (sessionId: string) => Effect.Effect<SessionView | null, InboxUnavailable>;
+    readonly read: (
+      sessionId: string,
+    ) => Effect.Effect<SessionView | null, InboxUnavailable | SessionFault>;
     readonly deliver: (
       sessionId: string,
       event: SessionEvent,
       eventId: string,
     ) => Effect.Effect<
       { readonly result: DecisionResult; readonly view: SessionView } | null,
-      InboxUnavailable
+      InboxUnavailable | SessionFault
     >;
     readonly start: (
       issue: number,
       event: Extract<SessionEvent, { readonly _tag: "IssueLabeled" }>,
       deliveryId: string,
-    ) => Effect.Effect<void, InboxUnavailable>;
+    ) => Effect.Effect<void, InboxUnavailable | SessionFault>;
   }
 >()("puchero/Sessions") {}
 
@@ -200,8 +203,12 @@ const webhook = Effect.gen(function* () {
   );
   return HttpServerResponse.empty({ status: 204 });
 }).pipe(
-  Effect.catchTag("InboxUnavailable", () =>
-    Effect.succeed(HttpServerResponse.text("Admission unavailable", { status: 503 })),
+  Effect.catchTag("SessionFault", (fault) => HttpServerResponse.json(fault, { status: 500 })),
+  Effect.catchTag("InboxUnavailable", (error) =>
+    HttpServerResponse.json(
+      new InboxUnavailable({ message: "Admission unavailable", reason: error.reason ?? "unknown" }),
+      { status: 503 },
+    ),
   ),
 );
 

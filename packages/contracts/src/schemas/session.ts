@@ -100,8 +100,14 @@ export class InboxForbidden extends Schema.TaggedError<InboxForbidden>()("InboxF
 export class InboxNotFound extends Schema.TaggedError<InboxNotFound>()("InboxNotFound", {
   message: Schema.String,
 }) {}
+/** A known session identity/state fault needs operator repair, not another attempt. */
+export class SessionFault extends Schema.TaggedError<SessionFault>()("SessionFault", {
+  code: Schema.Literals(["identity_mismatch", "state_unreadable"]),
+  message: Schema.String,
+}) {}
 export class InboxUnavailable extends Schema.TaggedError<InboxUnavailable>()("InboxUnavailable", {
   message: Schema.String,
+  reason: Schema.optionalKey(Schema.Literals(["temporary", "overloaded", "unknown"])),
 }) {}
 export class StaleDecision extends Schema.TaggedError<StaleDecision>()("StaleDecision", {
   message: Schema.String,
