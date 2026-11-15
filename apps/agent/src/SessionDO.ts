@@ -119,6 +119,7 @@ export class SessionDO extends Cloudflare.DurableObject<SessionDO>()(
         yield* arm(host.wake());
         return host;
       });
+      // A host opened by an RPC belongs to the DO instance, not to that request's scope.
       const open = (newIssue?: number) =>
         initialize.withPermits(1)(
           getHost(newIssue).pipe(Effect.provideService(Scope.Scope, instanceScope)),

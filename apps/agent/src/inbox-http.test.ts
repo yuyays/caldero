@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "@effect/vitest";
-import { InboxApi, summarizeSession } from "@puchero/contracts/inbox";
+import { InboxApi, InboxUnavailable, summarizeSession } from "@puchero/contracts/inbox";
 import { decide, Events, initialSession } from "@puchero/domain";
 import { Effect, Fiber, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
@@ -9,6 +9,7 @@ import { makeFakeGitHub } from "./fake-github.ts";
 import { makeInboxAuth, InboxAuth } from "./inbox-auth.ts";
 import { ApplicationRoutes, InboxConfig, Sessions } from "./inbox-http.ts";
 import { InboxStore } from "./inbox-store.ts";
+import { GitHub, GitHubError } from "./ports.ts";
 
 const repo = { owner: "acme", name: "app" };
 const id = "acme/app#7";
@@ -28,7 +29,12 @@ const payload = {
   sender: { login: "ann" },
 };
 const setup = Effect.fn("setupInboxHttp")(function* (
-  options: { hold?: Promise<void>; onAdmission?: () => void; policy?: "off" | "observe" } = {},
+  options: {
+    hold?: Promise<void>;
+    onAdmission?: () => void;
+    policy?: "off" | "observe";
+    failure?: "hydration" | "admission";
+  } = {},
 ) {
   let state = initialSession({ sessionId: id, repo, issue: 7, policy: "observe" });
   let exists = false;
@@ -55,7 +61,19 @@ const setup = Effect.fn("setupInboxHttp")(function* (
       list: () => Effect.succeed(exists ? [summarizeSession(state)] : []),
       audit: () => Effect.succeed([]),
     }),
-    makeFakeGitHub({ source: [] }).layer,
+    Layer.effect(
+      GitHub,
+      Effect.gen(function* () {
+        const github = yield* GitHub;
+        return {
+          ...github,
+          fetchIssueContext:
+            options.failure === "hydration"
+              ? () => Effect.fail(new GitHubError({ message: "GitHub unavailable" }))
+              : github.fetchIssueContext,
+        };
+      }),
+    ).pipe(Layer.provide(makeFakeGitHub({ source: [] }).layer)),
     Layer.succeed(Sessions, {
       read: () => Effect.succeed(exists ? view() : null),
       deliver: (_sessionId, event, eventId) =>
@@ -68,6 +86,8 @@ const setup = Effect.fn("setupInboxHttp")(function* (
       start: (_issue, event, deliveryId) =>
         Effect.gen(function* () {
           options.onAdmission?.();
+          if (options.failure === "admission")
+            return yield* new InboxUnavailable({ message: "Storage unavailable" });
           if (options.hold !== undefined) yield* Effect.promise(() => options.hold!);
           if (!seen.has(deliveryId)) {
             starts += 1;
@@ -76,6 +96,7 @@ const setup = Effect.fn("setupInboxHttp")(function* (
             apply(event);
             seen.add(deliveryId);
           }
+          return undefined;
         }),
     }),
   );
@@ -93,8 +114,7 @@ const setup = Effect.fn("setupInboxHttp")(function* (
   );
   const send = (path: string, init?: RequestInit) =>
     Effect.promise(() => http.handler(new Request(`${origin}${path}`, init)));
-  const webhook = (data = payload, signature?: string) => {
-    const body = JSON.stringify(data);
+  const signedBody = (body: string, signature?: string) => {
     return send("/webhooks/github", {
       method: "POST",
       body,
@@ -106,6 +126,8 @@ const setup = Effect.fn("setupInboxHttp")(function* (
       },
     });
   };
+  const webhook = (data = payload, signature?: string) =>
+    signedBody(JSON.stringify(data), signature);
   const propose = () => {
     apply(Events.RunAnswered.make({ runId: 1 }));
     apply(Events.Validated.make({ runId: 1, patchDigest: patch.digest, evidence: "tests passed" }));
@@ -114,6 +136,7 @@ const setup = Effect.fn("setupInboxHttp")(function* (
   return {
     send,
     webhook,
+    signedBody,
     propose,
     view,
     starts: () => starts,
@@ -123,6 +146,29 @@ const setup = Effect.fn("setupInboxHttp")(function* (
 });
 
 describe("Inbox HTTP", () => {
+  it.effect(
+    "rejects oversized or malformed signed deliveries and reports failed admission without acknowledging it",
+    () =>
+      Effect.gen(function* () {
+        const api = yield* setup();
+        expect((yield* api.signedBody(" ".repeat(1_048_577))).status).toBe(413);
+        expect((yield* api.signedBody("{broken")).status).toBe(400);
+        expect((yield* api.signedBody("{}")).status).toBe(400);
+        expect(api.starts()).toBe(0);
+        for (const failure of ["hydration", "admission"] as const) {
+          const unavailable = yield* setup({ failure });
+          expect((yield* unavailable.webhook()).status).toBe(503);
+          expect(unavailable.starts()).toBe(0);
+        }
+        expect((yield* api.send("/api/viewer")).status).toBe(401);
+        const viewer = yield* api.send("/api/viewer", {
+          headers: { authorization: "Bearer local-token" },
+        });
+        expect(viewer.status).toBe(200);
+        expect(yield* Effect.promise(() => viewer.json())).toEqual({ login: "ann" });
+      }),
+  );
+
   it.effect("acknowledges only after durable admission resolves", () =>
     Effect.gen(function* () {
       const hold = Promise.withResolvers<void>();

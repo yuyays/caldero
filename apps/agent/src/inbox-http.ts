@@ -205,9 +205,7 @@ const webhook = Effect.gen(function* () {
   return HttpServerResponse.empty({ status: 204 });
 }).pipe(
   Effect.catchTag("InboxUnavailable", () =>
-    Effect.succeed(
-      HttpServerResponse.text("Admission unavailable; retry this delivery", { status: 503 }),
-    ),
+    Effect.succeed(HttpServerResponse.text("Admission unavailable", { status: 503 })),
   ),
 );
 

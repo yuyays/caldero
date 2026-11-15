@@ -41,7 +41,6 @@ describe("decide", () => {
   it("keeps the state of each projected revision even when later events change the session", () => {
     const first = run([labeled]);
     const projected = first.instructions.find((instruction) => instruction["_tag"] === "Project");
-    expect(projected).toHaveProperty("snapshot");
     if (projected?.["_tag"] !== "Project") expect.unreachable();
     expect(JSON.parse(projected.snapshot)).toMatchObject({
       status: "running",

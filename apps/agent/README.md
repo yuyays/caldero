@@ -62,7 +62,9 @@ Configure an Access application for the inbox/API. Exclude `/webhooks/github` fr
 the Worker authenticates that route with HMAC on the original bytes. Subscribe to issue events. Only `labeled`,
 label exactly `agent`, the configured repository/installation, and non-PR issues are admitted. Other verified events
 return 204. The first successful admission fixes the hydrated base and records delivery/sender/label provenance.
-Acknowledgement waits for the durable admission commit; a lost response can be retried with the same delivery ID.
+Unknown RPC failures return 503 without acknowledging admission; this does not classify them as transient.
+Identity/schema corruption requires operator repair, and permanent-vs-transient RPC error classification is deferred
+before deployment. A caller must not retry indefinitely. Acknowledgement waits for the durable admission commit; a lost response can be retried with the same delivery ID.
 
 API identity comes only from a cryptographically verified Access JWT (RS256, issuer, audience, expiry/not-before).
 The email header and request-body actor are never trusted. Unmapped identities get 403; invalid tokens or JWKS
