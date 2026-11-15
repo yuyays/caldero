@@ -51,6 +51,8 @@ const setup = Effect.fn("setup")(function* (
     readonly onValidate?: () => void;
     /** Every validation dies with this defect instead of running. */
     readonly validationDefect?: Error;
+    /** A persisted session document whose JSON cannot be decoded on reopen. */
+    readonly corruptState?: () => boolean;
     readonly crashAtCheckpoint?: "uploaded" | "committed";
     readonly wrapGitHub?: (
       github: ReturnType<typeof GitHub.of>,
@@ -65,6 +67,7 @@ const setup = Effect.fn("setup")(function* (
   const durable = new MemoryStorage();
   const store = makeMemoryWorkspaceStore();
   let checkpointCrash = options.crashAtCheckpoint;
+  let corruptWrites = 0;
   const workspace = LocalWorkspace.layer({
     root,
     store: store.service,
@@ -128,8 +131,22 @@ const setup = Effect.fn("setup")(function* (
       storage: process.gate(
         new Proxy(durable, {
           get(target, property, receiver) {
+            if (property === "close") return async () => {};
+            if (property === "document")
+              return async (...args: Parameters<typeof durable.document>) => {
+                const document = await target.document(...args);
+                return options.corruptState?.() && document?.record.kind === "puchero.session"
+                  ? { ...document, value: { ...document.value, state: "{broken stored JSON" } }
+                  : document;
+              };
             if (property !== "commit") return Reflect.get(target, property, receiver);
             return async (...args: Parameters<typeof durable.commit>) => {
+              if (options.corruptState?.())
+                corruptWrites += args[0]
+                  .flat()
+                  .filter(
+                    (write) => write.type.startsWith("document.") || write.type === "task",
+                  ).length;
               const result = await target.commit(...args);
               const pointer = args[0]
                 .flat()
@@ -158,7 +175,18 @@ const setup = Effect.fn("setup")(function* (
   });
 
   const { host, crash, crashed } = yield* open();
-  return { host, crash, crashed, open, root, github, projection, scripted, store };
+  return {
+    host,
+    crash,
+    crashed,
+    open,
+    root,
+    github,
+    projection,
+    scripted,
+    store,
+    corruptWrites: () => corruptWrites,
+  };
 });
 
 /** Runs the labeled issue to its first candidate and returns that candidate's binding. */
@@ -173,6 +201,26 @@ const propose = Effect.fn("propose")(function* (
 });
 
 describe("SessionHost", () => {
+  it.effect(
+    "refuses corrupt persisted state as a permanent fault without replacing the candidate",
+    () =>
+      Effect.gen(function* () {
+        let corrupt = false;
+        const { host, crash, open, corruptWrites } = yield* setup({ corruptState: () => corrupt });
+        const binding = yield* propose(host);
+        crash();
+        corrupt = true;
+        expect(yield* open().pipe(Effect.scoped, Effect.flip)).toMatchObject({
+          _tag: "SessionFault",
+          code: "state_unreadable",
+        });
+        expect(corruptWrites()).toBe(0);
+        corrupt = false;
+        const recovered = yield* open();
+        expect((yield* recovered.host.view()).state.candidate?.binding).toEqual(binding);
+      }),
+  );
+
   it.effect("keeps session state and cancellation available when a frozen patch blob is lost", () =>
     Effect.gen(function* () {
       const { host, store } = yield* setup();

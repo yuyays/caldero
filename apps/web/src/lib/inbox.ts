@@ -4,6 +4,8 @@ import {
   InboxUnauthorized,
   InboxForbidden,
   StaleDecision,
+  SessionFault,
+  InboxUnavailable,
   type DecisionRequest,
   type SessionView,
 } from "@puchero/contracts/inbox";
@@ -42,7 +44,8 @@ export const detailQuery = (sessionId: string) =>
     queryKey: ["session", sessionId],
     queryFn: ({ signal }) =>
       Effect.runPromise(client.sessions.get({ params: { sessionId } }), { signal }),
-    refetchInterval: 3000,
+    refetchInterval: (query) =>
+      sessionFault(query.state.error) || overloaded(query.state.error) ? false : 3000,
     retry: false,
   });
 export type Action = "approve" | "reject" | "cancel" | "input";
@@ -66,13 +69,21 @@ export const decideSession = ({ action, view, requestId, text }: Decision) => {
   return Effect.runPromise(client.sessions[action]({ params, payload }));
 };
 export const staleDecision = Schema.is(StaleDecision);
+export const sessionFault = Schema.is(SessionFault);
+const unavailable = Schema.is(InboxUnavailable);
+const overloaded = (error: unknown) => unavailable(error) && error.reason === "overloaded";
 const unauthorized = Schema.is(InboxUnauthorized);
 const forbidden = Schema.is(InboxForbidden);
-export const inboxError = (error: unknown) =>
-  unauthorized(error)
-    ? "Sign in through Cloudflare Access. For local development, enter your local token below."
-    : forbidden(error)
-      ? "Your account cannot review this inbox. Check the configured reviewer mapping."
-      : staleDecision(error)
-        ? error.message
-        : "The inbox could not be reached. Refresh to try again.";
+export const inboxError = (error: unknown) => {
+  if (unauthorized(error))
+    return "Sign in through Cloudflare Access. For local development, enter your local token below.";
+  if (forbidden(error))
+    return "Your account cannot review this inbox. Check the configured reviewer mapping.";
+  if (sessionFault(error))
+    return "This session cannot be read. Operator repair is required; retrying will not fix it.";
+  if (staleDecision(error)) return error.message;
+  if (overloaded(error))
+    return "The session is overloaded. Wait before refreshing; the last decision's outcome may be unknown.";
+  if (unavailable(error)) return error.message;
+  return "The inbox could not be reached. Refresh to try again.";
+};

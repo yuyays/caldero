@@ -1,6 +1,11 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "@effect/vitest";
-import { InboxApi, InboxUnavailable, summarizeSession } from "@puchero/contracts/inbox";
+import {
+  InboxApi,
+  InboxUnavailable,
+  SessionFault,
+  summarizeSession,
+} from "@puchero/contracts/inbox";
 import { decide, Events, initialSession } from "@puchero/domain";
 import { Effect, Fiber, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
@@ -33,7 +38,7 @@ const setup = Effect.fn("setupInboxHttp")(function* (
     hold?: Promise<void>;
     onAdmission?: () => void;
     policy?: "off" | "observe";
-    failure?: "hydration" | "admission" | "audit";
+    failure?: "hydration" | "admission" | "audit" | "permanent";
   } = {},
 ) {
   let state = initialSession({ sessionId: id, repo, issue: 7, policy: "observe" });
@@ -78,17 +83,37 @@ const setup = Effect.fn("setupInboxHttp")(function* (
       }),
     ).pipe(Layer.provide(makeFakeGitHub({ source: [] }).layer)),
     Layer.succeed(Sessions, {
-      read: () => Effect.succeed(exists ? view() : null),
+      read: () =>
+        options.failure === "permanent"
+          ? Effect.fail(
+              new SessionFault({
+                code: "state_unreadable",
+                message: "Stored state cannot be read; operator repair is required.",
+              }),
+            )
+          : Effect.succeed(exists ? view() : null),
       deliver: (_sessionId, event, eventId) =>
-        Effect.sync(() => {
-          if (!exists) return null;
-          const result = seen.has(eventId) ? "duplicate" : apply(event);
-          seen.add(eventId);
-          return { result, view: view() };
-        }),
+        options.failure === "permanent"
+          ? Effect.fail(
+              new SessionFault({
+                code: "state_unreadable",
+                message: "Stored state cannot be read; operator repair is required.",
+              }),
+            )
+          : Effect.sync(() => {
+              if (!exists) return null;
+              const result = seen.has(eventId) ? "duplicate" : apply(event);
+              seen.add(eventId);
+              return { result, view: view() };
+            }),
       start: (_issue, event, deliveryId) =>
         Effect.gen(function* () {
           options.onAdmission?.();
+          if (options.failure === "permanent")
+            return yield* new SessionFault({
+              code: "state_unreadable",
+              message: "Stored state cannot be read; operator repair is required.",
+            });
           if (options.failure === "admission")
             return yield* new InboxUnavailable({ message: "Storage unavailable" });
           if (options.hold !== undefined) yield* Effect.promise(() => options.hold!);
@@ -149,6 +174,41 @@ const setup = Effect.fn("setupInboxHttp")(function* (
 });
 
 describe("Inbox HTTP", () => {
+  it.effect(
+    "returns permanent faults as typed 500 responses for admission, detail and decisions",
+    () =>
+      Effect.gen(function* () {
+        const api = yield* setup({ failure: "permanent" });
+        const admission = yield* api.webhook();
+        expect(admission.status).toBe(500);
+        expect(yield* Effect.promise(() => admission.json())).toMatchObject({
+          _tag: "SessionFault",
+          code: "state_unreadable",
+        });
+        expect(api.starts()).toBe(0);
+        const headers = {
+          authorization: "Bearer local-token",
+          origin,
+          "content-type": "application/json",
+        };
+        const path = `/api/sessions/${encodeURIComponent(id)}`;
+        for (const response of [
+          yield* api.send(path, { headers }),
+          yield* api.send(path + "/cancel", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ requestId: "stop" }),
+          }),
+        ]) {
+          expect(response.status).toBe(500);
+          expect(yield* Effect.promise(() => response.json())).toMatchObject({
+            _tag: "SessionFault",
+            code: "state_unreadable",
+          });
+        }
+      }),
+  );
+
   it.effect("keeps authoritative detail and decisions available when audit storage fails", () =>
     Effect.gen(function* () {
       const api = yield* setup({ failure: "audit" });

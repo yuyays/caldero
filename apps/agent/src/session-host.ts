@@ -21,7 +21,7 @@ import {
   type ToolRegistration,
   type Wake,
 } from "@earendil-works/pi-durable";
-import type { SessionView } from "@puchero/contracts/inbox";
+import { SessionFault, type SessionView } from "@puchero/contracts/inbox";
 export type { SessionView } from "@puchero/contracts/inbox";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import {
@@ -50,7 +50,17 @@ import {
 const context = BACKGROUND_CONTEXT;
 const codingTools: ReadonlyArray<ToolRegistration> = CodingTools.tools ?? [];
 const stateJson = Schema.fromJsonString(SessionState);
-const decodeState = Schema.decodeSync(stateJson);
+const readStateJson = Schema.decodeSync(stateJson);
+const decodeState = (json: string) => {
+  try {
+    return readStateJson(json);
+  } catch {
+    throw new SessionFault({
+      code: "state_unreadable",
+      message: "Stored session state cannot be read; operator repair is required.",
+    });
+  }
+};
 const encodeState = Schema.encodeSync(stateJson);
 
 /** The kind of the transcript entry every puchero input is placed as; its data names the run it belongs to. */
@@ -97,7 +107,8 @@ export class SessionHostError extends Schema.TaggedError<SessionHostError>()("Se
   message: Schema.String,
 }) {}
 
-const hostError = (error: unknown) => new SessionHostError({ message: errorMessage(error) });
+const hostError = (error: unknown) =>
+  error instanceof SessionFault ? error : new SessionHostError({ message: errorMessage(error) });
 
 export interface SessionHostOptions {
   readonly storage: Storage;
@@ -550,6 +561,21 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
       catch: hostError,
     });
 
+  // Read persisted state before any initialization write; an unreadable session must never be replaced.
+  const savedState = yield* pi((callContext) => harness.snapshot(SessionDoc, callContext));
+  if (savedState !== undefined) {
+    const saved = yield* Effect.try({ try: () => decodeState(savedState.state), catch: hostError });
+    if (
+      saved.sessionId !== options.session.sessionId ||
+      saved.issue !== options.session.issue ||
+      saved.repo.owner !== options.session.repo.owner ||
+      saved.repo.name !== options.session.repo.name
+    )
+      return yield* new SessionFault({
+        code: "identity_mismatch",
+        message: "Stored session identity does not match this issue; operator repair is required.",
+      });
+  }
   const conversation = yield* pi((callContext) =>
     harness.root(callContext, {
       agent: { model: options.model, extensions: [CodingTools, Puchero] },

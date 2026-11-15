@@ -8,7 +8,7 @@ import { inboxDatabase } from "./inbox-database.ts";
 import { ApplicationRoutes, InboxConfig, Sessions } from "./inbox-http.ts";
 import { InboxStore, makeD1InboxStore } from "./inbox-store.ts";
 import { GitHub } from "./ports.ts";
-import { SessionDO } from "./SessionDO.ts";
+import { SessionDO, SessionDOLive } from "./SessionDO.ts";
 import { makeSessionDirectory } from "./session-directory.ts";
 
 /** Signed admission and authenticated decisions are the only public session transports. */
@@ -53,5 +53,5 @@ export default class Agent extends Cloudflare.Worker<Agent>()(
         return yield* fetch.pipe(Effect.provide(services));
       }).pipe(Effect.orDie),
     };
-  }).pipe(Effect.provide(Cloudflare.D1.QueryDatabaseBinding)),
+  }).pipe(Effect.provide(Layer.mergeAll(Cloudflare.D1.QueryDatabaseBinding, SessionDOLive))),
 ) {}

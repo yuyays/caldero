@@ -10,6 +10,7 @@ import {
   InboxUnauthorized,
   InboxUnavailable,
   InputRequest,
+  SessionFault,
   SessionDetail,
   SessionSummary,
   StaleDecision,
@@ -21,6 +22,7 @@ const errors = [
   InboxForbidden.pipe(HttpApiSchema.status(403)),
   InboxNotFound.pipe(HttpApiSchema.status(404)),
   InboxUnavailable.pipe(HttpApiSchema.status(503)),
+  SessionFault.pipe(HttpApiSchema.status(500)),
   StaleDecision.pipe(HttpApiSchema.status(409)),
   InboxMediaType.pipe(HttpApiSchema.status(415)),
 ];

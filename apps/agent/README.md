@@ -62,9 +62,12 @@ Configure an Access application for the inbox/API. Exclude `/webhooks/github` fr
 the Worker authenticates that route with HMAC on the original bytes. Subscribe to issue events. Only `labeled`,
 label exactly `agent`, the configured repository/installation, and non-PR issues are admitted. Other verified events
 return 204. The first successful admission fixes the hydrated base and records delivery/sender/label provenance.
-Unknown RPC failures return 503 without acknowledging admission; this does not classify them as transient.
-Identity/schema corruption requires operator repair, and permanent-vs-transient RPC error classification is deferred
-before deployment. A caller must not retry indefinitely. Hydration precedes session dedupe, so even redelivery may fail on GitHub reads; it never changes an already-admitted
+Known session identity or unreadable-state faults return typed HTTP 500 `SessionFault` and require operator repair.
+Their DO instance stops its host and alarm; repeating a start does not clear the fault. Other RPC failures remain 503
+with a diagnostic reason (`temporary`, `overloaded`, or `unknown`) and do not prove whether a mutation committed.
+The inbox stops polling permanent faults/overloads and does not retry mutations automatically. See
+[session fault design](../../docs/design/session-faults.md) for ownership, recovery and residual unknown failures.
+A caller must not retry indefinitely. Hydration precedes session dedupe, so even redelivery may fail on GitHub reads; it never changes an already-admitted
 session's base. Acknowledgement waits for the durable admission commit; a lost response can be retried with the same delivery ID.
 
 API identity comes only from a cryptographically verified Access JWT (RS256, issuer, audience, expiry/not-before).

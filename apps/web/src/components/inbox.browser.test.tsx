@@ -1,7 +1,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { SessionView } from "@puchero/contracts/inbox";
+import { SessionFault, type SessionView } from "@puchero/contracts/inbox";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { SessionReview } from "./inbox.js";
 import { detailQuery } from "../lib/inbox.js";
@@ -62,6 +62,30 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("Candidate review", () => {
+  it("explains permanent session faults without offering another retry or allowing another decision", async () => {
+    const fetcher = vi.fn<typeof fetch>(() =>
+      Promise.resolve(
+        Response.json(new SessionFault({ code: "state_unreadable", message: "Unreadable" }), {
+          status: 500,
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const cache = mount();
+    await userEvent.click(screen.getByRole("button", { name: "Approve & open PR" }));
+    await waitFor(() => expect(screen.getByText(/Operator repair is required/)).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Approve & open PR" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    await cache.invalidateQueries({ queryKey: ["session", binding.sessionId] });
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain("retrying will not fix it"),
+    );
+    expect(screen.queryByRole("button", { name: "Retry session" })).toBeNull();
+    cache.clear();
+  });
+
   it("disables approval for a missing patch while preserving stop controls and explaining audit failure", async () => {
     const missing = { ...view, patch: null, patchUnavailable: true };
     const stopped = { ...missing, state: { ...missing.state, status: "cancelled" } };

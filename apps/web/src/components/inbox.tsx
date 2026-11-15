@@ -10,6 +10,7 @@ import {
   sessionsQuery,
   setLocalToken,
   staleDecision,
+  sessionFault,
   viewerQuery,
   type Action,
   type Decision,
@@ -158,6 +159,7 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
   const [input, setInput] = useState("");
   const decision = useMutation({
     mutationFn: decideSession,
+    retry: false,
     onSuccess: (result) => {
       cache.setQueryData(detailQuery(sessionId).queryKey, (old: SessionDetail | undefined) => ({
         view: result.view,
@@ -193,15 +195,17 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
     return (
       <section role="alert" className="rounded-xl bg-amber-50 p-6 text-amber-950">
         {inboxError(detail.error)}{" "}
-        <Button className="ml-2" variant="outline" onClick={() => void detail.refetch()}>
-          Retry session
-        </Button>
+        {!sessionFault(detail.error) && (
+          <Button className="ml-2" variant="outline" onClick={() => void detail.refetch()}>
+            Retry session
+          </Button>
+        )}
       </section>
     );
   const { view, audit, auditUnavailable } = detail.data;
   const { state, patch } = view;
   const candidate = state.candidate;
-  const pending = decision.isPending || detail.isFetching;
+  const pending = decision.isPending || detail.isFetching || sessionFault(decision.error);
   const reviewable =
     state.status === "awaitingApproval" &&
     candidate !== null &&
