@@ -29,6 +29,28 @@ export const statusLabel: Record<SessionSummary["status"], string> = {
 };
 const time = (value: number) => (value === 0 ? "Not started" : new Date(value).toLocaleString());
 
+const publicationMode: Record<
+  SessionDetail["view"]["state"]["policy"],
+  { label: string; actionCopy: string; canDecide: boolean }
+> = {
+  auto: {
+    label: "Automatic PR",
+    actionCopy:
+      "This session opens a pull request automatically after validation. Merging is a separate decision.",
+    canDecide: false,
+  },
+  observe: {
+    label: "Approval required",
+    actionCopy: "Approving opens a pull request with the exact candidate shown above.",
+    canDecide: true,
+  },
+  off: {
+    label: "Disabled",
+    actionCopy: "Agent work is disabled for this session.",
+    canDecide: false,
+  },
+};
+
 /** The index helps navigation; only the current session view enables decisions. */
 export function Inbox() {
   const [selected, select] = useState<string | null>(null);
@@ -204,6 +226,7 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
     );
   const { view, audit, auditUnavailable } = detail.data;
   const { state, patch } = view;
+  const mode = publicationMode[state.policy];
   const candidate = state.candidate;
   const blocked = decision.isPending || detail.isFetching || sessionFault(decision.error);
   const reviewable =
@@ -270,13 +293,7 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
       <dl className="my-6 grid gap-4 border-y border-stone-200 py-5 text-sm sm:grid-cols-2">
         <div className="sm:col-span-2">
           <dt className="text-stone-600">Publication mode</dt>
-          <dd className="mt-1 font-medium">
-            {state.policy === "auto"
-              ? "Automatic PR"
-              : state.policy === "observe"
-                ? "Approval required"
-                : "Disabled"}
-          </dd>
+          <dd className="mt-1 font-medium">{mode.label}</dd>
         </div>
         <div>
           <dt className="text-stone-600">Candidate / run</dt>
@@ -327,7 +344,7 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
         ) : (
           <p className="rounded-xl bg-stone-100 p-5 text-sm leading-6 text-stone-600">
             {view.patchUnavailable
-              ? "The validated patch could not be loaded. Refresh to retry. Approval is disabled; you can still stop this session."
+              ? `The validated patch could not be loaded. Refresh to retry.${mode.canDecide ? " Approval is disabled until the patch is available." : ""}`
               : state.status === "running" || state.status === "validating"
                 ? "The agent is still working. Changes and check results appear here when a candidate is ready."
                 : "No validated patch is available for this session."}
@@ -335,15 +352,9 @@ export function SessionReview({ sessionId }: { sessionId: string }) {
         )}
       </section>
       <section className="my-6 border-y border-stone-300 py-5" aria-label="Review actions">
-        <p className="mb-4 text-sm text-stone-600">
-          {state.policy === "auto"
-            ? "This session opens a pull request automatically after validation. Merging is a separate decision."
-            : state.policy === "observe"
-              ? "Approving opens a pull request with the exact candidate shown above."
-              : "Agent work is disabled for this session."}
-        </p>
+        <p className="mb-4 text-sm text-stone-600">{mode.actionCopy}</p>
         <div className="flex flex-wrap gap-3">
-          {state.policy === "observe" && (
+          {mode.canDecide && (
             <>
               <Button disabled={!reviewable || blocked} onClick={() => act("approve")}>
                 {decision.isPending && decision.variables.action === "approve"

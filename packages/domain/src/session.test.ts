@@ -1,11 +1,10 @@
-import { Schema } from "effect";
 import { describe, expect, it } from "@effect/vitest";
 import {
   decide,
   type Decision,
   Events,
   initialSession,
-  Policy,
+  type Policy,
   type SessionEvent,
 } from "./session.ts";
 
@@ -47,7 +46,7 @@ const approve = (binding = firstBinding) => Events.Approve.make({ actor: "yuyays
 
 describe("decide", () => {
   it("publishes a validated frozen candidate automatically without recording a human approval", () => {
-    const automatic = fresh(Schema.decodeUnknownSync(Policy)("auto"));
+    const automatic = fresh("auto");
     const decision = run(proposed, automatic);
     expect(decision.state).toMatchObject({
       status: "publishing",
@@ -72,7 +71,7 @@ describe("decide", () => {
   });
 
   it("refuses human approve and reject actions for automatic sessions", () => {
-    const automatic = run(proposed, fresh(Schema.decodeUnknownSync(Policy)("auto"))).state;
+    const automatic = run(proposed, fresh("auto")).state;
     for (const event of [
       approve(),
       Events.Reject.make({ actor: "someone", binding: firstBinding }),
@@ -85,7 +84,7 @@ describe("decide", () => {
     }
   });
   it("never publishes failed or stale auto validation and validates queued input as a new candidate", () => {
-    const automatic = fresh(Schema.decodeUnknownSync(Policy)("auto"));
+    const automatic = fresh("auto");
     const failed = run(
       [labeled, answered(1), Events.ValidationFailed.make({ runId: 1, evidence: "tests failed" })],
       automatic,

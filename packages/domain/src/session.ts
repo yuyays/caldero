@@ -4,7 +4,7 @@ import { Schema } from "effect";
 export const Repo = Schema.Struct({ owner: Schema.String, name: Schema.String });
 export type Repo = typeof Repo.Type;
 
-/** What an approval is bound to: the exact candidate a reviewer saw. */
+/** The exact candidate a publication or approval is bound to. */
 export const ApprovalBinding = Schema.Struct({
   sessionId: Schema.String,
   version: Schema.Int,
@@ -263,7 +263,6 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
           version,
           attempts: 0,
           candidate: { binding, evidence },
-          ...(automatic ? { decidedBy: null } : {}),
         },
         automatic
           ? [(instructionId) => Instruction.cases.Publish.make({ instructionId, binding })]

@@ -1,8 +1,7 @@
-import { Schema } from "effect";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { SessionFault, SessionView } from "@puchero/contracts/inbox";
+import { SessionFault, type SessionView } from "@puchero/contracts/inbox";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { SessionReview } from "./inbox.js";
 import { detailQuery } from "../lib/inbox.js";
@@ -64,7 +63,7 @@ afterEach(() => {
 });
 describe("Candidate review", () => {
   it("identifies automatic publication and links the opened PR without asking for approval", () => {
-    const automatic = Schema.decodeUnknownSync(SessionView)({
+    const automatic: SessionView = {
       ...view,
       state: {
         ...view.state,
@@ -72,7 +71,7 @@ describe("Candidate review", () => {
         status: "published",
         pullRequest: { number: 123, url: "https://github.com/acme/app/pull/123" },
       },
-    });
+    };
     const cache = mount(automatic);
     expect(screen.getByText("Automatic PR")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Open pull request #123" })).toHaveProperty(
