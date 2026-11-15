@@ -204,8 +204,11 @@ const webhook = Effect.gen(function* () {
   return HttpServerResponse.empty({ status: 204 });
 }).pipe(
   Effect.catchTag("SessionFault", (fault) => HttpServerResponse.json(fault, { status: 500 })),
-  Effect.catchTag("InboxUnavailable", () =>
-    Effect.succeed(HttpServerResponse.text("Admission unavailable", { status: 503 })),
+  Effect.catchTag("InboxUnavailable", (error) =>
+    HttpServerResponse.json(
+      new InboxUnavailable({ message: "Admission unavailable", reason: error.reason ?? "unknown" }),
+      { status: 503 },
+    ),
   ),
 );
 

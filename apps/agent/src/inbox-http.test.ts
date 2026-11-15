@@ -39,6 +39,7 @@ const setup = Effect.fn("setupInboxHttp")(function* (
     onAdmission?: () => void;
     policy?: "off" | "observe";
     failure?: "hydration" | "admission" | "audit" | "permanent";
+    unavailableReason?: "temporary" | "overloaded" | "unknown";
   } = {},
 ) {
   let state = initialSession({ sessionId: id, repo, issue: 7, policy: "observe" });
@@ -115,7 +116,10 @@ const setup = Effect.fn("setupInboxHttp")(function* (
               message: "Stored state cannot be read; operator repair is required.",
             });
           if (options.failure === "admission")
-            return yield* new InboxUnavailable({ message: "Storage unavailable" });
+            return yield* new InboxUnavailable({
+              message: "Storage unavailable",
+              reason: options.unavailableReason ?? "unknown",
+            });
           if (options.hold !== undefined) yield* Effect.promise(() => options.hold!);
           if (!seen.has(deliveryId)) {
             starts += 1;
@@ -174,6 +178,21 @@ const setup = Effect.fn("setupInboxHttp")(function* (
 });
 
 describe("Inbox HTTP", () => {
+  it.effect("preserves availability diagnostics in signed webhook failure responses", () =>
+    Effect.gen(function* () {
+      for (const reason of ["temporary", "overloaded", "unknown"] as const) {
+        const api = yield* setup({ failure: "admission", unavailableReason: reason });
+        const response = yield* api.webhook();
+        expect(response.status).toBe(503);
+        expect(yield* Effect.promise(() => response.json())).toMatchObject({
+          _tag: "InboxUnavailable",
+          reason,
+        });
+        expect(api.starts()).toBe(0);
+      }
+    }),
+  );
+
   it.effect(
     "returns permanent faults as typed 500 responses for admission, detail and decisions",
     () =>

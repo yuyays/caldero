@@ -19,6 +19,7 @@ const identityMismatch = () =>
 
 /** Owns one session's identity, activation resources and sticky instance fault. Temporary failures never latch. */
 export const makeSessionAccess = Effect.fn("makeSessionAccess")(function* <A>(options: {
+  readonly expectedIssue: number | undefined;
   readonly readIdentity: Effect.Effect<unknown, SessionHostError>;
   readonly writeIdentity: (issue: number) => Effect.Effect<void, SessionHostError>;
   readonly create: (
@@ -29,7 +30,6 @@ export const makeSessionAccess = Effect.fn("makeSessionAccess")(function* <A>(op
   const instanceScope = yield* Scope.Scope;
   const lock = yield* Semaphore.make(1);
   let host: A | undefined;
-  let issue: number | undefined;
   let fault: SessionFault | undefined;
   let hostScope: Scope.Closeable | undefined;
   const fail = Effect.fn("SessionAccess.fail")(function* (error: SessionFault) {
@@ -41,12 +41,15 @@ export const makeSessionAccess = Effect.fn("makeSessionAccess")(function* <A>(op
   }, Effect.uninterruptible);
   const openHost = Effect.fn("SessionAccess.open")(function* (newIssue?: number) {
     if (fault !== undefined) return yield* fault;
-    if (newIssue !== undefined && (!Number.isSafeInteger(newIssue) || newIssue < 1))
+    const expected = options.expectedIssue;
+    if (
+      expected === undefined ||
+      !Number.isSafeInteger(expected) ||
+      expected < 1 ||
+      (newIssue !== undefined && newIssue !== expected)
+    )
       return yield* identityMismatch();
-    if (host !== undefined) {
-      if (newIssue !== undefined && issue !== newIssue) return yield* identityMismatch();
-      return host;
-    }
+    if (host !== undefined) return host;
     const saved = yield* options.readIdentity;
     if (saved === undefined && newIssue === undefined) return undefined;
     const identity =
@@ -61,11 +64,9 @@ export const makeSessionAccess = Effect.fn("makeSessionAccess")(function* <A>(op
                 }),
             ),
           )).issue;
-    // Stored identities are schema-validated; new identities were validated before reading storage.
-    if (identity === undefined || (newIssue !== undefined && newIssue !== identity))
-      return yield* identityMismatch();
-    issue = identity;
-    if (saved === undefined) yield* options.writeIdentity(issue);
+    // The native DO name fixes identity even when no caller is creating a session (reads and alarms).
+    if (identity !== expected) return yield* identityMismatch();
+    if (saved === undefined) yield* options.writeIdentity(expected);
     // Failed attempts close immediately. A successful host belongs to the DO instance, not an RPC request.
     return yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {

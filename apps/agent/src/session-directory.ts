@@ -3,6 +3,7 @@ import { InboxUnavailable, SessionFault } from "@puchero/contracts/inbox";
 import type { DecisionResult, Repo, SessionEvent } from "@puchero/domain";
 import { type Context, Cause, Effect } from "effect";
 import { RpcCallError } from "alchemy/Rpc";
+import { sessionIssue } from "./session-identity.ts";
 import { Sessions } from "./inbox-http.ts";
 
 /** The RPC boundary, including unknown transport outcomes, without the Cloudflare resource declaration. */
@@ -34,10 +35,10 @@ const transportReason = (error: unknown): "temporary" | "overloaded" | "unknown"
 const rpcFailure =
   (message: string) =>
   (
-    cause: Cause.Cause<SessionFault | RpcCallError>,
+    cause: Cause.Cause<SessionFault | RpcCallError | InboxUnavailable>,
   ): Effect.Effect<never, SessionFault | InboxUnavailable> => {
     const error = Cause.squash(cause);
-    return error instanceof SessionFault
+    return error instanceof SessionFault || error instanceof InboxUnavailable
       ? Effect.fail(error)
       : Effect.fail(new InboxUnavailable({ message, reason: transportReason(error) }));
   };
@@ -49,12 +50,7 @@ export const makeSessionDirectory = <R>(
   context: Context.Context<R>,
 ) => {
   const prefix = `${repo.owner}/${repo.name}#`;
-  const peer = (id: string) => {
-    if (!id.startsWith(prefix)) return undefined;
-    const suffix = id.slice(prefix.length);
-    const issue = Number(suffix);
-    return /^[1-9]\d*$/.test(suffix) && Number.isSafeInteger(issue) ? lookup(id) : undefined;
-  };
+  const peer = (id: string) => (sessionIssue(repo, id) === undefined ? undefined : lookup(id));
   return Sessions.of({
     read: Effect.fn("Sessions.read")(
       function* (id) {
@@ -77,9 +73,9 @@ export const makeSessionDirectory = <R>(
     start: Effect.fn("Sessions.start")(
       function* (issue, event, deliveryId) {
         if (!Number.isSafeInteger(issue) || issue < 1)
-          return yield* new SessionFault({
-            code: "identity_mismatch",
-            message: "Issue identity is invalid; operator repair is required.",
+          return yield* new InboxUnavailable({
+            message: "Issue identity is invalid",
+            reason: "unknown",
           });
         yield* lookup(`${prefix}${issue}`).start(issue, event, deliveryId);
         return undefined;

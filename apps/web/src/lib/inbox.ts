@@ -84,6 +84,7 @@ export const inboxError = (error: unknown) => {
   if (staleDecision(error)) return error.message;
   if (overloaded(error))
     return "The session is overloaded. Wait before refreshing; the last decision's outcome may be unknown.";
-  if (unavailable(error)) return error.message;
+  if (unavailable(error))
+    return "The inbox is unavailable. Refresh to check the session before retrying a decision.";
   return "The inbox could not be reached. Refresh to try again.";
 };

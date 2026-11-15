@@ -25,6 +25,11 @@ explicitly disabled. A permanent fault displays operator-repair guidance, not a 
 
 ## Ownership and recovery
 
+The native DO name (`owner/repo#issue`) supplies the expected issue independently of stored identity or create
+permission. It is validated on every open, including activation, reads, decisions and alarms; missing/mismatched
+names fail closed. A known expected issue alone never permits a read to create a session. The Worker uses
+`getByName()` exclusively, and [Cloudflare preserves that name for alarms](https://developers.cloudflare.com/changelog/post/2026-03-15-durable-object-id-name/).
+
 The activation module owns a per-instance fault latch, identity validation, serialized opens, and a child scope for
 each activation attempt. The modular DO constructor uses an explicitly retained instance scope, because
 Alchemy's constructor layer scope closes when construction returns; failed construction closes the retained scope. Known identity/state faults gate every later open/start in that instance. It closes any
@@ -45,13 +50,14 @@ need operator intervention; they are not guessed permanent from their message.
 
 ## Acceptance criteria
 
-- Malformed stored identity and mismatched issue identity fail permanently before host creation or identity writes;
+- Malformed stored identity and a valid-but-different stored issue fail permanently before host creation or identity writes;
   repeat starts cannot clear the fault.
 - Malformed persisted reducer JSON yields `SessionFault` with no document/task writes; the original candidate is
   unchanged when the read fault is removed and a new host opens.
 - Temporary activation failure closes its attempt resources; a later open succeeds and reuses the successful host.
 - Declared faults survive Alchemy RPC serialization/revival and become typed 500 for webhook, detail and decisions.
 - Retryable, overloaded and unknown RPC exceptions yield 503 with the correct diagnostic reason and one dispatch.
+  Signed webhook failures retain that reason in a structured JSON error.
   The existing host crash-before-ack test continues to prove event-ID deduplication.
 - The inbox explains permanent faults, disables decisions, removes Retry, and stops polling them. Existing healthy,
   stale approval and patch/audit degradation contracts continue to pass.

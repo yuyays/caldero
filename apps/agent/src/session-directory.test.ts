@@ -99,6 +99,10 @@ describe("Session directory", () => {
           expect(yield* directory.deliver(id, event, "event")).toBeNull();
         }
         expect(calls).toEqual([]);
+        expect(yield* directory.start(0, event, "invalid-issue").pipe(Effect.flip)).toMatchObject({
+          _tag: "InboxUnavailable",
+        });
+        expect(calls).toEqual([]);
         yield* directory.start(7, event, "delivery");
         expect(calls).toEqual(["acme/app#7"]);
         expect(admitted).toEqual({ issue: 7, eventId: "delivery" });

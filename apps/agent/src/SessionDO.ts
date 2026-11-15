@@ -10,6 +10,7 @@ import { inboxDatabase } from "./inbox-database.ts";
 import { makeD1InboxStore } from "./inbox-store.ts";
 import { errorMessage, GitHub, Projection, WorkspaceError } from "./ports.ts";
 import { Sandbox } from "./Sandbox.ts";
+import { sessionIssue } from "./session-identity.ts";
 import { makeSessionAccess } from "./session-access.ts";
 import { openSessionHost, SessionHostError, type SessionHost } from "./session-host.ts";
 
@@ -115,6 +116,7 @@ const implementation = Effect.gen(function* () {
           return host;
         });
         const sessions = yield* makeSessionAccess({
+          expectedIssue: sessionIssue(settings.repo, raw.id.name),
           readIdentity: Effect.tryPromise({
             try: () => raw.storage.get("identity"),
             catch: activationError,
