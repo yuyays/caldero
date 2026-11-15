@@ -1,20 +1,25 @@
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
-import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { Effect, Layer, Schema, Semaphore } from "effect";
+import { Effect, Schema, Semaphore } from "effect";
 import { Base64, Hex } from "effect/encoding";
 import {
   errorMessage,
-  type FileChange,
+  type Checkpoint,
+  FileChange,
+  type WorkspaceRecovery,
+  WorkspaceStore,
   GitHub,
   Patch,
   Workspace,
   WorkspaceError,
 } from "./ports.ts";
 
-const context = BACKGROUND_CONTEXT;
+const background = BACKGROUND_CONTEXT;
 const author = ["-c", "user.name=puchero", "-c", "user.email=puchero@localhost"];
 const decodePatch = Schema.decodeUnknownEffect(Schema.fromJsonString(Patch));
+const filesJson = Schema.fromJsonString(Schema.Array(FileChange));
+const decodeFiles = Schema.decodeUnknownEffect(filesJson);
+const encodeFiles = Schema.encodeEffect(filesJson);
 const encodePatch = Schema.encodeEffect(Schema.fromJsonString(Patch));
 
 const failure = (error: unknown) => new WorkspaceError({ message: errorMessage(error) });
@@ -29,7 +34,7 @@ const digestOf = Effect.fn("digestOf")(function* (files: ReadonlyArray<FileChang
 
 /**
  * A git-tracked workspace over any Pi `ExecutionEnv`: the repository at its base commit lives in `<root>/work`, and
- * every validated candidate is frozen as `<root>/candidates/<digest>` and `<root>/patches/<digest>.json`.
+ * validated candidates are frozen under `<root>/candidates` and stored outside the workspace disk.
  * The environment adapters (local process, container) differ only in the `ExecutionEnv` they pass.
  */
 export const makeGitWorkspace = Effect.fn("makeGitWorkspace")(function* (options: {
@@ -39,18 +44,25 @@ export const makeGitWorkspace = Effect.fn("makeGitWorkspace")(function* (options
   readonly checks: ReadonlyArray<string>;
 }) {
   const github = yield* GitHub;
+  const store = yield* WorkspaceStore;
+  // oxlint-disable-next-line starter/runtime-boundary -- Pi ExecutionEnv is a Promise adapter
+  const run = Effect.runPromiseWith(yield* Effect.context());
+  const guarding = yield* Semaphore.make(1);
   const { env, root, checks } = options;
+  let recoveryJournal: WorkspaceRecovery | undefined;
   // One validation at a time: each stages the whole index.
   const validating = yield* Semaphore.make(1);
   const work = `${root}/work`;
   const marker = `${work}/.git/puchero-base`;
 
   const call = <A>(
-    operation: () => Promise<{ ok: true; value: A } | { ok: false; error: Error }>,
+    operation: (
+      context: typeof BACKGROUND_CONTEXT,
+    ) => Promise<{ ok: true; value: A } | { ok: false; error: Error }>,
   ) =>
     Effect.tryPromise({
-      try: async () => {
-        const result = await operation();
+      try: async (signal) => {
+        const result = await operation(withAbortSignal(signal, background));
         if (!result.ok) throw result.error;
         return result.value;
       },
@@ -61,10 +73,11 @@ export const makeGitWorkspace = Effect.fn("makeGitWorkspace")(function* (options
   const exec = Effect.fn("GitWorkspace.exec")(function* (
     command: string | ReadonlyArray<string>,
     cwd: string,
+    allowFailure = false,
   ) {
     let stdout = "";
     let stderr = "";
-    const result = yield* call(() =>
+    const result = yield* call((context) =>
       env.exec(
         command,
         {
@@ -77,20 +90,20 @@ export const makeGitWorkspace = Effect.fn("makeGitWorkspace")(function* (options
         context,
       ),
     );
+    if (!allowFailure && result.exitCode !== 0)
+      return yield* new WorkspaceError({
+        message: `Workspace command failed (${result.exitCode}): ${stderr.trim()}`,
+      });
     return { exitCode: result.exitCode, stdout, stderr };
   });
 
   const git = Effect.fn("git")(function* (args: ReadonlyArray<string>, cwd = work) {
     const result = yield* exec(["git", ...author, ...args], cwd);
-    if (result.exitCode !== 0)
-      return yield* new WorkspaceError({
-        message: `git ${args.join(" ")} failed: ${result.stderr.trim()}`,
-      });
     return result.stdout;
   });
 
-  const readText = (path: string) => call(() => env.readTextFile(path, context));
-  const exists = (path: string) => call(() => env.exists(path, context));
+  const readText = (path: string) => call((context) => env.readTextFile(path, context));
+  const exists = (path: string) => call((context) => env.exists(path, context));
 
   const prepare = Effect.fn("GitWorkspace.prepare")(function* (
     repo: { readonly owner: string; readonly name: string },
@@ -105,14 +118,14 @@ export const makeGitWorkspace = Effect.fn("makeGitWorkspace")(function* (options
     for (const file of files) {
       const path = `${work}/${file.path}`;
       yield* exec(["mkdir", "-p", path.slice(0, path.lastIndexOf("/"))], root);
-      yield* call(() => env.writeFile(path, file.content, context));
+      yield* call((context) => env.writeFile(path, file.content, context));
       if (file.executable) yield* exec(["chmod", "+x", path], root);
     }
     yield* git(["init", "-q"]);
     yield* git(["add", "-A"]);
     yield* git(["commit", "-q", "--allow-empty", "-m", `base ${baseSha}`]);
     // Written last: a prepare cut off before this point starts over.
-    yield* call(() => env.writeFile(marker, baseSha, context));
+    yield* call((context) => env.writeFile(marker, baseSha, context));
   });
 
   /** The staged change set against the base commit, sorted by path. */
@@ -130,7 +143,7 @@ export const makeGitWorkspace = Effect.fn("makeGitWorkspace")(function* (options
         files.push({ path, change: "delete" });
         continue;
       }
-      const content = yield* call(() => env.readBinaryFile(`${work}/${path}`, context));
+      const content = yield* call((context) => env.readBinaryFile(`${work}/${path}`, context));
       const mode = (yield* git(["ls-files", "-s", "--", path])).split(" ")[0];
       files.push({
         path,
@@ -152,14 +165,13 @@ export const makeGitWorkspace = Effect.fn("makeGitWorkspace")(function* (options
     const frozen = `${root}/candidates/${patch.digest}`;
     yield* exec(["rm", "-rf", frozen], root);
     yield* git(["checkout-index", "-a", "-f", `--prefix=${frozen}/`]);
-    yield* exec(["mkdir", "-p", `${root}/patches`], root);
     const json = yield* encodePatch(patch).pipe(Effect.mapError(failure));
-    yield* call(() => env.writeFile(`${root}/patches/${patch.digest}.json`, json, context));
+    yield* store.put(`patches/${patch.digest}`, json);
 
     let passed = true;
     const evidence: Array<string> = [];
     for (const check of checks) {
-      const result = yield* exec(check, frozen);
+      const result = yield* exec(check, frozen, true);
       passed &&= result.exitCode === 0;
       evidence.push(`$ ${check}\n${result.stdout}${result.stderr}(exit ${result.exitCode})`);
     }
@@ -167,37 +179,119 @@ export const makeGitWorkspace = Effect.fn("makeGitWorkspace")(function* (options
   });
 
   const patch = Effect.fn("GitWorkspace.patch")(function* (digest: string) {
-    const stored = yield* decodePatch(yield* readText(`${root}/patches/${digest}.json`)).pipe(
+    const stored = yield* decodePatch(yield* store.get(`patches/${digest}`)).pipe(
       Effect.mapError(failure),
     );
-    // The file lives where the agent's commands can reach it, so only its digest vouches for it.
-    if ((yield* digestOf(stored.files)) !== digest)
+    // Verify the immutable store receipt before publication.
+    if (stored.digest !== digest || (yield* digestOf(stored.files)) !== digest)
       return yield* new WorkspaceError({ message: `patch ${digest} was changed after validation` });
     return stored;
   });
 
+  const checkpoint = Effect.fn("GitWorkspace.checkpoint")(function* (number: number) {
+    const files = yield* changes();
+    const digest = yield* digestOf(files);
+    yield* store.put(
+      `checkpoints/${digest}`,
+      yield* encodeFiles(files).pipe(Effect.mapError(failure)),
+    );
+    return { number, digest } satisfies Checkpoint;
+  });
+
+  const restore = Effect.fn("GitWorkspace.restore")(function* (pointer: Checkpoint) {
+    const files = yield* decodeFiles(yield* store.get(`checkpoints/${pointer.digest}`)).pipe(
+      Effect.mapError(failure),
+    );
+    if ((yield* digestOf(files)) !== pointer.digest)
+      return yield* new WorkspaceError({ message: "Checkpoint digest mismatch" });
+    yield* git(["reset", "--hard", "HEAD"]);
+    yield* git(["clean", "-fdx"]);
+    // Remove old paths first, including directory/file replacements.
+    const ordered = [
+      ...files.filter((file) => file.change === "delete"),
+      ...files.filter((file) => file.change === "write"),
+    ];
+    for (const file of ordered) {
+      const path = `${work}/${file.path}`;
+      if (file.change === "delete") yield* exec(["rm", "-f", path], root);
+      else {
+        const bytes = yield* Effect.fromResult(Base64.decode(file.content)).pipe(
+          Effect.mapError(failure),
+        );
+        yield* exec(["rm", "-rf", path], root);
+        yield* exec(["mkdir", "-p", path.slice(0, path.lastIndexOf("/"))], root);
+        yield* call((context) => env.writeFile(path, bytes, context));
+        yield* exec(["chmod", file.executable ? "755" : "644", path], root);
+      }
+    }
+    return undefined;
+  });
+
+  const guard = Effect.fn("GitWorkspace.guard")(function* (recovery: WorkspaceRecovery) {
+    const saved = yield* Effect.tryPromise({
+      try: (signal) => recovery.read(signal),
+      catch: failure,
+    });
+    yield* call((context) => env.createDir(root, { recursive: true }, context));
+    const bootPath = `${root}/.boot`;
+    if (!(yield* exists(bootPath)))
+      yield* call((context) => env.writeFile(bootPath, crypto.randomUUID(), context));
+    const bootId = (yield* readText(bootPath)).trim();
+    if (saved.bootId === bootId) return;
+    yield* prepare(saved.repo, saved.baseSha);
+    if (saved.checkpoint !== null) yield* restore(saved.checkpoint);
+    const notice =
+      saved.bootId === null
+        ? undefined
+        : `Your workspace was restored to checkpoint ${saved.checkpoint?.number ?? 0}; re-check files before continuing.`;
+    yield* Effect.tryPromise({
+      try: (signal) => recovery.restored(bootId, notice, signal),
+      catch: failure,
+    });
+  });
+
+  /** Every environment operation checks the boot; internal snapshot/restore operations use the raw environment. */
+  const guardedEnv = (recovery?: WorkspaceRecovery): ExecutionEnv => {
+    recoveryJournal = recovery;
+    return recovery === undefined
+      ? env
+      : new Proxy(env, {
+          get(target, property, receiver) {
+            const value: unknown = Reflect.get(target, property, receiver);
+            if (typeof value !== "function" || property === "cleanup") return value;
+            return async (...args: Array<unknown>) => {
+              const invocation = args.at(-1);
+              const signal =
+                typeof invocation === "object" &&
+                invocation !== null &&
+                "abortSignal" in invocation &&
+                invocation.abortSignal instanceof AbortSignal
+                  ? invocation.abortSignal
+                  : undefined;
+              await run(guarding.withPermits(1)(guard(recovery)), { signal });
+              return Reflect.apply(value, target, args);
+            };
+          },
+        });
+  };
+
   return Workspace.of({
-    env: () => env,
+    env: guardedEnv,
+    checkpoint: Effect.fn("GitWorkspace.checkpointGuarded")(function* (number: number) {
+      if (recoveryJournal !== undefined) yield* guarding.withPermits(1)(guard(recoveryJournal));
+      return yield* checkpoint(number);
+    }),
     prepare,
     validate: Effect.fn("GitWorkspace.validateOneAtATime")(function* () {
+      if (recoveryJournal !== undefined) yield* guarding.withPermits(1)(guard(recoveryJournal));
       return yield* validating.withPermits(1)(validate());
     }),
     patch,
     quiesce: Effect.fn("GitWorkspace.quiesce")(function* () {
-      yield* Effect.tryPromise({ try: () => env.cleanup(context), catch: failure });
+      yield* Effect.tryPromise({
+        try: (signal) => env.cleanup(withAbortSignal(signal, background)),
+        catch: failure,
+      });
     }),
   });
 });
-
-/** The workspace as local processes in a directory on this machine: for tests and local runs. */
-export const LocalWorkspace = {
-  layer: (options: { readonly root: string; readonly checks: ReadonlyArray<string> }) =>
-    Layer.effect(
-      Workspace,
-      makeGitWorkspace({
-        env: new NodeExecutionEnv({ cwd: `${options.root}/work` }),
-        root: options.root,
-        checks: options.checks,
-      }),
-    ),
-};

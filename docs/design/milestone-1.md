@@ -241,6 +241,45 @@ from its storage and ports, then opening the next. Changes from the design above
 - **Moved to step 3:** the Alchemy DO shell (with the heartbeat above), criterion 9 (checkpoints), patches in R2
   (they live on the workspace disk until then), and forwarding cancellation into Pi calls.
 
+### Step 3 as built
+
+`ContainerWorkspace` reuses `makeGitWorkspace` over pi-env's `RemoteExecutionEnv`. The promoted `ContainerConnection`
+uses the native container transport and calls Alchemy's idempotent `sandbox.start({ enableInternet: false })` before
+starting each daemon with native `exec`. Pi's Promise operations map into typed `WorkspaceError` / `SessionHostError`
+Effects; invocation cancellation flows into Pi contexts, environment calls and transport startup waits.
+
+- **Recovery journal.** `Workspace.env(recovery)` accepts Pi journal callbacks, keeping boot detection and restoration
+  inside the workspace. The host binds this once when opening; checkpoint and validation also check the guard. The
+  separate `puchero.workspace` Pi document holds the last boot ID and `{ number, digest }` checkpoint pointer.
+  Only a changed `/workspace/.boot` means reset; opening another DO process with the same marker preserves its disk.
+  Restore commits the new boot ID and the required steer in one transaction. Before the first checkpoint, reset
+  restores the base and names it checkpoint 0.
+- **Checkpoint protocol.** Coding tools run sequentially (including reads, a simpler restriction than serializing only
+  mutations). After `write`, `edit` and `bash`, the wrapper uploads the full `FileChange[]` against the base, then
+  commits its pointer with `api.commit()`, before returning the tool result. An uploaded blob without a committed
+  pointer is an orphan and is ignored; after a committed pointer, recovery accepts Pi's interrupted tool result.
+  The known loss window remains mutation before checkpoint upload/pointer commit.
+- **Stores.** Checkpoints and validated patches are content-addressed JSON outside the sandbox: namespaced R2 for the
+  container, a retained in-memory store for local tests. Both verify file digests on retrieval/restoration. R2 writes
+  use create-only conditions. Frozen validation directories remain disposable sandbox data. `LocalWorkspace` moved
+  to its own file so the Worker doesn't bundle the Node process adapter.
+- **DO shell.** `SessionDO` opens Pi on DO SQLite and exposes `deliver` / `view`. Pi wake scheduling and a roughly
+  30-second heartbeat while running or validating share one alarm. The container connection and Pi host belong to
+  the instance scope. Faulted instruction tasks become visible reducer failures; `onReport` triggers synchronization,
+  and opening/resuming also checks durable task records, covering a crash before report handling. Faulted answer
+  reporting tasks are checked too. Comment/projection faults have no waiting session transition to unblock.
+- **Development scope.** `apps/agent/alchemy.run.ts` and its minimal Worker route use faux models, FakeGitHub, an
+  in-memory projection, and fixed demo issue metadata; webhook verification, real GitHub credentials, the inbox and
+  D1 remain later work. `fetchSource` is still a file list rather than a tarball; pi-env's file writer already chunks
+  transfers below its frame limit. The image has git/bash/coreutils, with no project dependency cache yet; validation
+  requiring other packages must extend the image. See `apps/agent/README.md` for local commands.
+
+Verification: the reusable Workspace contract runs against LocalWorkspace; SessionHost integration tests cover
+criteria 4, both criterion 9 crash windows, criterion 12 restoration and steer, and faulted-task failure reporting.
+The existing session criteria remain covered. Local `alchemy dev` with Docker reached `awaitingApproval` through
+DO SQLite, container tools, checkpoint upload and R2 patch retrieval. Cloudflare deployment, real eviction/CPU limits,
+and reset/reconnect recovery on the deployed platform remain unverified; no deployment was performed.
+
 ## Open questions
 
 - Validation dependencies: are baked caches enough for typical repos, or do we need an egress allowlist?

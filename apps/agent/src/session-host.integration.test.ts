@@ -1,14 +1,16 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { MemoryStorage } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "@effect/vitest";
 import { Events } from "@puchero/domain";
 import { Effect, Layer } from "effect";
 import { Base64 } from "effect/encoding";
 import { makeFakeGitHub } from "./fake-github.ts";
-import { LocalWorkspace } from "./git-workspace.ts";
+import { LocalWorkspace } from "./local-workspace.ts";
 import { GitHub, Projection, Workspace } from "./ports.ts";
+import { makeMemoryWorkspaceStore } from "./workspace-store.ts";
 import { openSessionHost } from "./session-host.ts";
 import {
   failing,
@@ -21,6 +23,7 @@ import {
 const repo = { owner: "acme", name: "app" };
 const source = [
   { path: "README.md", content: new TextEncoder().encode("# app\n"), executable: false },
+  { path: "bin/run", content: new TextEncoder().encode("#!/bin/sh\n"), executable: true },
 ];
 const labeled = Events.IssueLabeled.make({ context: "Write the notes.", baseSha: "base-1" });
 
@@ -44,6 +47,7 @@ const setup = Effect.fn("setup")(function* (
     readonly onValidate?: () => void;
     /** Every validation dies with this defect instead of running. */
     readonly validationDefect?: Error;
+    readonly crashAtCheckpoint?: "uploaded" | "committed";
   } = {},
 ) {
   const root = yield* Effect.promise(() => mkdtemp(join(tmpdir(), "puchero-")));
@@ -51,8 +55,11 @@ const setup = Effect.fn("setup")(function* (
   const projection = makeMemoryProjection();
   const scripted = scriptedModels();
   const durable = new MemoryStorage();
+  const store = makeMemoryWorkspaceStore();
+  let checkpointCrash = options.crashAtCheckpoint;
   const workspace = LocalWorkspace.layer({
     root,
+    store: store.service,
     checks: options.checks?.(root) ?? ["test -f notes.txt"],
   });
 
@@ -63,22 +70,35 @@ const setup = Effect.fn("setup")(function* (
       Workspace,
       Effect.gen(function* () {
         const local = yield* Workspace;
-        const env = process.gate(local.env());
-        const watched = new Proxy(env, {
-          get: (target, property, receiver) =>
-            property === "writeFile"
-              ? (...args: Parameters<typeof env.writeFile>) => {
-                  options.onWrite?.();
-                  return target.writeFile(...args);
+        const watched = (recovery: Parameters<typeof local.env>[0]) => {
+          const env = process.gate(local.env(recovery));
+          return new Proxy(env, {
+            get: (target, property, receiver) =>
+              property === "writeFile"
+                ? (...args: Parameters<typeof env.writeFile>) => {
+                    options.onWrite?.();
+                    return target.writeFile(...args);
+                  }
+                : Reflect.get(target, property, receiver),
+          });
+        };
+        const checkpoint = (number: number) =>
+          local.checkpoint(number).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                if (checkpointCrash === "uploaded") {
+                  checkpointCrash = undefined;
+                  process.crash();
                 }
-              : Reflect.get(target, property, receiver),
-        });
+              }),
+            ),
+          );
         const validate = () => {
           options.onValidate?.();
           const defect = options.validationDefect;
           return defect === undefined ? local.validate() : Effect.die(defect);
         };
-        return Workspace.of({ ...process.gate({ ...local, validate }), env: () => watched });
+        return Workspace.of({ ...process.gate({ ...local, validate, checkpoint }), env: watched });
       }),
     ).pipe(Layer.provide(workspace));
     const services = Layer.mergeAll(
@@ -93,7 +113,31 @@ const setup = Effect.fn("setup")(function* (
       ),
     );
     const host = yield* openSessionHost({
-      storage: process.gate(durable),
+      storage: process.gate(
+        new Proxy(durable, {
+          get(target, property, receiver) {
+            if (property !== "commit") return Reflect.get(target, property, receiver);
+            return async (...args: Parameters<typeof durable.commit>) => {
+              const result = await target.commit(...args);
+              const pointer = args[0]
+                .flat()
+                .some(
+                  (write) =>
+                    (write.type === "document.create" || write.type === "document.change") &&
+                    write.content.kind === "base" &&
+                    typeof write.content.value.checkpoint === "object" &&
+                    write.content.value.checkpoint !== null,
+                );
+              if (checkpointCrash === "committed" && pointer) {
+                checkpointCrash = undefined;
+                process.crash();
+                throw new Error("Process crashed after pointer commit");
+              }
+              return result;
+            };
+          },
+        }),
+      ),
       session: { sessionId: "acme/app#7", repo, issue: 7, policy: "observe" },
       models: scripted.models,
       model: scripted.model,
@@ -102,7 +146,7 @@ const setup = Effect.fn("setup")(function* (
   });
 
   const { host, crash, crashed } = yield* open();
-  return { host, crash, crashed, open, root, github, projection, scripted };
+  return { host, crash, crashed, open, root, github, projection, scripted, store };
 });
 
 /** Runs the labeled issue to its first candidate and returns that candidate's binding. */
@@ -117,6 +161,113 @@ const propose = Effect.fn("propose")(function* (
 });
 
 describe("SessionHost", () => {
+  for (const crashAtCheckpoint of ["uploaded", "committed"] as const) {
+    it.effect(
+      `recovers after checkpoint ${crashAtCheckpoint}, before the tool result, and restores on a changed boot`,
+      () =>
+        Effect.gen(function* () {
+          const first = yield* setup({ crashAtCheckpoint });
+          const seen: Array<string> = [];
+          const reads: Array<string> = [];
+          first.scripted.control.script = (transcript) => {
+            const messages = transcript.messages;
+            seen.push(JSON.stringify(messages));
+            const results = messages.filter((message) => message.role === "toolResult");
+            for (const result of results)
+              if (result.toolName === "read" && !result.isError)
+                reads.push(JSON.stringify(result.content));
+            if (results.length === 0)
+              return fauxAssistantMessage(
+                fauxToolCall("write", { path: "notes.txt", content: "durable notes\n" }),
+                { stopReason: "toolUse" },
+              );
+            if (!results.some((result) => result.toolName === "read"))
+              return fauxAssistantMessage(fauxToolCall("read", { path: "notes.txt" }), {
+                stopReason: "toolUse",
+              });
+            if (!results.some((result) => result.toolName === "write" && !result.isError))
+              return fauxAssistantMessage(
+                fauxToolCall("write", { path: "notes.txt", content: "durable notes\n" }),
+                { stopReason: "toolUse" },
+              );
+            return fauxAssistantMessage("Done.");
+          };
+          yield* first.host.deliver(labeled, "delivery-1");
+          yield* first.crashed;
+          // Simulate a genuinely new container, rather than treating the DO crash as a reset.
+          yield* Effect.promise(() => rm(join(first.root, "work"), { recursive: true }));
+          yield* Effect.promise(() => writeFile(join(first.root, ".boot"), "new-container"));
+          const recovered = yield* first.open();
+          yield* recovered.host.drain();
+          const { state, patch } = yield* recovered.host.view();
+          expect(state.status).toBe("awaitingApproval");
+          expect(patch?.files).toEqual([
+            {
+              path: "notes.txt",
+              change: "write",
+              content: Base64.encode("durable notes\n"),
+              executable: false,
+            },
+          ]);
+          const transcript = seen.join("\n");
+          expect(transcript).toContain("interrupted");
+          expect(transcript).toContain(
+            `Your workspace was restored to checkpoint ${crashAtCheckpoint === "committed" ? 1 : 0}; re-check files before continuing.`,
+          );
+          expect(reads.some((content) => content.includes("durable notes"))).toBe(
+            crashAtCheckpoint === "committed",
+          );
+        }),
+    );
+  }
+
+  it.effect(
+    "publishes binary content, deletion and mode changes from the stored patch unchanged",
+    () =>
+      Effect.gen(function* () {
+        const { host, scripted, github } = yield* setup({ checks: () => ["test -f logo.bin"] });
+        scripted.control.script = (transcript) =>
+          transcript.messages.some((message) => message.role === "toolResult" && !message.isError)
+            ? fauxAssistantMessage("Done.")
+            : fauxAssistantMessage(
+                fauxToolCall("bash", {
+                  command:
+                    "printf '\\000\\377\\001\\376' > logo.bin; rm README.md; chmod 644 bin/run",
+                }),
+                { stopReason: "toolUse" },
+              );
+        const binding = yield* propose(host);
+        yield* host.deliver(Events.Approve.make({ actor: "ann", binding }), "approve");
+        yield* host.drain();
+        expect((yield* host.view()).state.status).toBe("published");
+        expect(github.state.pullRequests[0]?.patch.files).toEqual([
+          { path: "README.md", change: "delete" },
+          {
+            path: "bin/run",
+            change: "write",
+            content: Base64.encode("#!/bin/sh\n"),
+            executable: false,
+          },
+          { path: "logo.bin", change: "write", content: "AP8B/g==", executable: false },
+        ]);
+      }),
+  );
+
+  it.effect("maps a faulted validation task to visible failure and exhausts the retry limit", () =>
+    Effect.gen(function* () {
+      const { host } = yield* setup({
+        onValidate: () => {
+          throw new Error("validation task crashed");
+        },
+      });
+      yield* host.deliver(labeled, "delivery-1");
+      yield* host.drain();
+      const { state } = yield* host.view();
+      expect(state).toMatchObject({ status: "failed", attempts: 3 });
+      expect(state.failure).toContain("validation task crashed");
+    }),
+  );
+
   it.effect("runs a labeled issue once, validates it, and waits for approval", () =>
     Effect.gen(function* () {
       const { host, projection } = yield* setup();

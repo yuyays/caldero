@@ -96,11 +96,16 @@ export default defineConfig({
           "apps/api/src/http.ts",
           // Pi Durable calls the session host's tasks as Promises.
           "apps/agent/src/session-host.ts",
+          "apps/agent/src/SessionDO.ts",
           "apps/web/src/lib/api-client.ts",
           "apps/web/src/lib/users.ts",
           ...testFiles,
         ],
         rules: { "starter/runtime-boundary": "off" },
+      },
+      {
+        files: ["apps/agent/src/SessionDO.ts"],
+        rules: { "effecttsgo/strict-effect-provide": "off" },
       },
       {
         // API tests run Effects through @effect/vitest, which provides TestClock.

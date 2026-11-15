@@ -1,4 +1,4 @@
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai/models";
 import {
   type ConversationId,
@@ -16,6 +16,9 @@ import {
   runEndTask,
   type Storage,
   type Tx,
+  type TaskId,
+  wrapTool,
+  type ToolRegistration,
   type Wake,
 } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
@@ -31,6 +34,7 @@ import {
 import { Cause, Clock, Effect, Exit, Schema } from "effect";
 import {
   errorMessage,
+  type Checkpoint,
   GitHub,
   type Patch,
   Projection,
@@ -40,6 +44,7 @@ import {
 } from "./ports.ts";
 
 const context = BACKGROUND_CONTEXT;
+const codingTools: ReadonlyArray<ToolRegistration> = CodingTools.tools ?? [];
 const stateJson = Schema.fromJsonString(SessionState);
 const decodeState = Schema.decodeSync(stateJson);
 const encodeState = Schema.encodeSync(stateJson);
@@ -55,13 +60,23 @@ const SessionDoc = defineDoc<{
   state: string;
   seen: Record<string, string>;
   runs: Record<string, number>;
+  tasks?: Array<TaskId>;
 }>({
   kind: "puchero.session",
   version: 1,
   scope: "session",
-  initial: () => ({ state: "", seen: {}, runs: {} }),
+  initial: () => ({ state: "", seen: {}, runs: {}, tasks: [] }),
   checkpointWhen: () => true,
 });
+
+const WorkspaceDoc = defineDoc<{ bootId: string | null; checkpoint: Checkpoint | null }>({
+  kind: "puchero.workspace",
+  version: 1,
+  scope: "session",
+  initial: () => ({ bootId: null, checkpoint: null }),
+  checkpointWhen: () => true,
+});
+const decodeInstruction = Schema.decodeUnknownSync(Instruction);
 
 export class SessionHostError extends Schema.TaggedError<SessionHostError>()("SessionHostError", {
   message: Schema.String,
@@ -126,18 +141,20 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
     doc.seen[eventId] = decision.result;
     if (decision.result !== "applied") return decision.result;
     doc.state = encodeState(decision.state);
-    for (const instruction of decision.instructions)
-      await tx.createTask(Instructions, instruction, {
+    for (const instruction of decision.instructions) {
+      const id = await tx.createTask(Instructions, instruction, {
         ownership: { kind: "conversation" },
         conversationId: root(),
         // Instructions outlive runs: aborting the conversation must not abort the abort itself.
         background: true,
       });
+      (doc.tasks ??= []).push(id);
+    }
     return decision.result;
   };
 
-  const readState = async () => {
-    const doc = await harness.snapshot(SessionDoc, context);
+  const readState = async (callContext = context) => {
+    const doc = await harness.snapshot(SessionDoc, callContext);
     return decodeState(doc?.state ?? "");
   };
 
@@ -244,9 +261,10 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
     initial: () => ({ phase: "run", attempt: 0 }),
     phases: {
       run: async (task, runtime) => {
+        const taskContext = withAbortSignal(runtime.signal, BACKGROUND_CONTEXT);
         const instruction = task.input;
         const eventId = `instruction:${instruction.instructionId}`;
-        const handle = await runtime.conversation(runtime.conversationId, context);
+        const handle = await runtime.conversation(runtime.conversationId, taskContext);
         if (handle === undefined) throw new Error("The session's conversation is missing");
 
         if (Instruction.guards.Submit(instruction)) {
@@ -258,6 +276,7 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
                   ? Effect.fail(new WorkspaceError({ message: "the base commit is unknown" }))
                   : workspace.prepare(state.repo, state.baseSha),
               ),
+              { signal: runtime.signal },
             );
             if (Exit.isFailure(prepared)) {
               // The session retries the run, within its attempt limit.
@@ -270,7 +289,7 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
                   runtime.now(),
                 );
                 return done;
-              }, context);
+              }, taskContext);
               return;
             }
           }
@@ -300,19 +319,21 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
             });
             doc.runs[instruction.instructionId] = instruction.runId;
             return done;
-          }, context);
+          }, taskContext);
           return;
         }
 
         if (Instruction.guards.AbortRun(instruction)) {
           // The run first, so it starts no command after the workspace is quiet.
-          await handle.abort(context);
-          await run(workspace.quiesce());
-          await runtime.commit(() => done, context);
+          await handle.abort(taskContext);
+          await run(workspace.quiesce(), { signal: runtime.signal });
+          await runtime.commit(() => done, taskContext);
           return;
         }
 
-        const outcome = await run(Effect.exit(perform(instruction, await readState())));
+        const outcome = await run(Effect.exit(perform(instruction, await readState())), {
+          signal: runtime.signal,
+        });
         const failed = Exit.isFailure(outcome)
           ? fallback(instruction, errorMessage(Cause.squash(outcome.cause)))
           : undefined;
@@ -338,7 +359,7 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
         await runtime.commit(async (tx) => {
           if (event !== undefined) await applyEvent(tx, event, eventId, runtime.now());
           return done;
-        }, context);
+        }, taskContext);
       },
     },
     abort: (_task, runtime) => runtime.commit(() => aborted, context),
@@ -351,6 +372,7 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
     initial: () => ({ phase: "report" }),
     phases: {
       report: async (task, runtime) => {
+        const callContext = withAbortSignal(runtime.signal, context);
         await runtime.commit(async (tx) => {
           // Input that arrived meanwhile starts another run of the same run ID; its answer is the one to validate.
           const inbox = await tx.doc(InboxDoc, runtime.conversationId);
@@ -363,7 +385,7 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
               runtime.now(),
             );
           return done;
-        }, context);
+        }, callContext);
       },
     },
     abort: (_task, runtime) => runtime.commit(() => aborted, context),
@@ -372,6 +394,26 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
   const Puchero = defineExtension({
     name: "puchero",
     tasks: [Instructions, RunAnswered],
+    wraps: codingTools.map((tool) =>
+      wrapTool(tool, (original) => ({
+        ...original,
+        executionMode: "sequential",
+        execute: async (args, api, toolContext) => {
+          const result = await original.execute(args, api, toolContext);
+          if (["write", "edit", "bash"].includes(original.name)) {
+            const saved = await api.snapshot(WorkspaceDoc, toolContext);
+            const pointer = await run(workspace.checkpoint((saved?.checkpoint?.number ?? 0) + 1), {
+              signal: toolContext.abortSignal,
+            });
+            // Upload precedes this durable pointer; the tool result commits separately afterwards.
+            await api.commit(async (tx) => {
+              (await tx.doc(WorkspaceDoc)).checkpoint = pointer;
+            }, toolContext);
+          }
+          return result;
+        },
+      })),
+    ),
     hooks: [
       hook(GenerationTask, {
         afterRun: async (summary, api) => {
@@ -402,21 +444,66 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
   registry.install(CodingTools);
   registry.install(Puchero);
 
+  const environment = workspace.env({
+    read: async (signal) => {
+      const callContext = withAbortSignal(signal, context);
+      const saved = await harness.snapshot(WorkspaceDoc, callContext);
+      const state = await readState(callContext);
+      if (state.baseSha === null) throw new Error("Workspace has no base commit");
+      return {
+        repo: state.repo,
+        baseSha: state.baseSha,
+        bootId: saved?.bootId ?? null,
+        checkpoint: saved?.checkpoint ?? null,
+      };
+    },
+    restored: async (bootId, notice, signal) =>
+      harness.commit(
+        async (tx) => {
+          const state = decodeState((await tx.doc(SessionDoc)).state);
+          if (notice !== undefined && state.status !== "running") {
+            // A restore after the answer reopens the run before the model edits again.
+            await applyEvent(
+              tx,
+              Events.UserInput.make({ text: notice }),
+              `workspace-reset:${bootId}`,
+              await run(Clock.currentTimeMillis),
+            );
+          } else if (notice !== undefined)
+            await conversation.submit(tx, {
+              type: "input",
+              content: notice,
+              requestId: `workspace-reset:${bootId}`,
+              whenBusy: "steer",
+              entry: {
+                kind: inputKind,
+                data: { runId: state.runId },
+              },
+            });
+          (await tx.doc(WorkspaceDoc)).bootId = bootId;
+        },
+        withAbortSignal(signal, context),
+      ),
+  });
+
   const harness: Harness = yield* Effect.acquireRelease(
     Effect.tryPromise({
-      try: () =>
+      try: (signal) =>
         Harness.open(
           options.storage,
           {
             models: options.models,
             registry,
-            env: () => workspace.env(),
+            env: () => environment,
             // Queued input behind a failed run is withdrawn; the session decides what runs next.
             settings: { afterFailedRun: "withdraw" },
             ...(options.onWake === undefined ? {} : { onWake: options.onWake }),
-            ...(options.onReport === undefined ? {} : { onReport: options.onReport }),
+            onReport: (report) => {
+              if (report.kind === "task_faulted") scheduleSync();
+              options.onReport?.(report);
+            },
           },
-          context,
+          withAbortSignal(signal, context),
         ),
       catch: hostError,
     }),
@@ -426,25 +513,83 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
       ),
   );
 
-  const pi = <A>(operation: () => Promise<A>) =>
-    Effect.tryPromise({ try: operation, catch: hostError });
+  const pi = <A>(operation: (context: typeof BACKGROUND_CONTEXT) => Promise<A>) =>
+    Effect.tryPromise({
+      try: (signal) => operation(withAbortSignal(signal, context)),
+      catch: hostError,
+    });
 
-  const conversation = yield* pi(() =>
-    harness.root(context, {
+  const conversation = yield* pi((callContext) =>
+    harness.root(callContext, {
       agent: { model: options.model, extensions: [CodingTools, Puchero] },
     }),
   );
   rootId = conversation.id;
-  yield* pi(() =>
+  yield* pi((callContext) =>
     harness.commit(async (tx) => {
       const doc = await tx.doc(SessionDoc);
       if (doc.state === "") doc.state = encodeState(initialSession(options.session));
-    }, context),
+    }, callContext),
   );
 
   const syncRun = async () => {
     const now = await run(Clock.currentTimeMillis);
-    await harness.commit((tx) => reportFailedRun(tx, now), context);
+    await harness.commit(async (tx) => {
+      const doc = await tx.doc(SessionDoc);
+      const processed = new Set(doc.tasks ?? []);
+      const tasks = await Promise.all(
+        [...processed].map(async (id) => ({ id, task: await tx.task(id) })),
+      );
+      const answeredFaults = [];
+      let cursor;
+      do {
+        const page = await tx.scanTasks(
+          { kind: "puchero.run-answered", status: "terminal" },
+          100,
+          cursor,
+        );
+        answeredFaults.push(...page.items);
+        cursor = page.next;
+      } while (cursor !== undefined);
+      await reportFailedRun(tx, now);
+      for (const task of answeredFaults) {
+        if (task.state.status !== "terminal" || task.state.outcome.status !== "faulted") continue;
+        const input = task.input;
+        if (
+          typeof input !== "object" ||
+          input === null ||
+          Array.isArray(input) ||
+          typeof input.runId !== "number"
+        )
+          continue;
+        await applyEvent(
+          tx,
+          Events.RunFailed.make({
+            runId: input.runId,
+            reason: `Answer reporting faulted: ${errorMessage(task.state.outcome.error)}`,
+          }),
+          `faulted:${task.id}`,
+          now,
+        );
+      }
+      const pending: Array<TaskId> = [];
+      for (const { id, task } of tasks) {
+        if (task === undefined) continue;
+        if (task.state.status !== "terminal") {
+          pending.push(id);
+          continue;
+        }
+        if (task.state.outcome.status !== "faulted") continue;
+        const instruction = decodeInstruction(task.input);
+        const reason = `Instruction ${instruction["_tag"]} faulted: ${errorMessage(task.state.outcome.error)}`;
+        const event = Instruction.guards.Submit(instruction)
+          ? Events.RunFailed.make({ runId: instruction.runId, reason })
+          : fallback(instruction, reason);
+        if (event !== undefined) await applyEvent(tx, event, `faulted:${id}`, now);
+      }
+      // applyEvent can append replacement tasks while handling a fault.
+      doc.tasks = [...pending, ...(doc.tasks ?? []).filter((id) => !processed.has(id))];
+    }, context);
   };
   let syncing = Promise.resolve();
   /** Runs `syncRun` after the previous one. A failure is logged; the next change, resume, or open runs it again. */
@@ -463,7 +608,9 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
     /** Decide and commit one event; the same `eventId` again returns its first result and changes nothing. */
     deliver: Effect.fn("SessionHost.deliver")(function* (event: SessionEvent, eventId: string) {
       const now = yield* Clock.currentTimeMillis;
-      return yield* pi(() => harness.commit((tx) => applyEvent(tx, event, eventId, now), context));
+      return yield* pi((callContext) =>
+        harness.commit((tx) => applyEvent(tx, event, eventId, now), callContext),
+      );
     }),
 
     view: Effect.fn("SessionHost.view")(function* () {
@@ -483,14 +630,24 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
         scheduleSync();
       }),
     wake: () => harness.wake(),
+    running: () =>
+      pi(async (callContext) => {
+        const state = await readState(callContext);
+        return state.status === "running" || state.status === "validating";
+      }),
 
     /** Waits until no task is live and every failed run is reported. For tests and graceful shutdown. */
     drain: () =>
       pi(async () => {
         for (;;) {
-          await syncing;
+          await syncRun();
+          const settled = syncing;
+          await settled;
           const inspection = await harness.inspect(context);
-          if (inspection.tasks.length === 0) return;
+          if (inspection.tasks.length === 0) {
+            if (settled === syncing) return;
+            continue;
+          }
           await Promise.all(
             inspection.tasks.map((task) => harness.waitForTask(task.record.id, context)),
           );
