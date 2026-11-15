@@ -22,11 +22,23 @@ jobs:
     runs-on: ubuntu-latest
     # The job takes about two minutes; a hang should not burn the full default.
     timeout-minutes: 8
+    env:
+      # The install below is the job's only one. If a later script sees stale dependencies,
+      # fail instead of paying for an implicit install part-way through the job.
+      PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: error
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.sha }}
       - uses: pnpm/action-setup@v6
+      # pnpm 12 re-applies `minimumReleaseAge` and the trust policy to every lockfile entry
+      # on install. Its verdict is one 1.5 KB file, and a cached verdict takes a
+      # `node_modules`-less install from 3.2s to 0.8s here — the 163 MB metadata cache next
+      # to it saves nothing more.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/pnpm/lockfile-verified.jsonl
+          key: pnpm-verdict-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml') }}
       - uses: actions/setup-node@v7
         with:
           node-version: 24
