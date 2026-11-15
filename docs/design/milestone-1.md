@@ -118,18 +118,20 @@ interface Workspace {
 
 ```ts
 interface GitHub {
-  fetchIssueContext(issue: IssueRef): Effect<IssueContext, GitHubError>;
-  fetchTarball(repo: RepoRef, sha: string): Effect<ReadableStream, GitHubError>;
+  fetchIssueContext(repo: Repo, issue: number): Effect<IssueContext, GitHubError>;
+  fetchSource(repo: Repo, sha: string): Effect<ReadonlyArray<SourceFile>, GitHubError>;
   publish(
+    issue: number,
     binding: ApprovalBinding,
     patch: Patch,
     journal: PublishJournal,
   ): Effect<PullRequest, PublishError>;
   reconcile(
+    issue: number,
     binding: ApprovalBinding,
     journal: PublishJournal,
   ): Effect<ReconcileResult, GitHubError>;
-  comment(issue: IssueRef, key: string, text: string): Effect<void, GitHubError>; // key in a hidden marker
+  comment(repo: Repo, issue: number, key: string, text: string): Effect<void, GitHubError>; // key in a hidden marker
 }
 ```
 
@@ -286,7 +288,10 @@ and reset/reconnect recovery on the deployed platform remain unverified; no depl
 sandbox; each operation mints a fresh token restricted to the configured repository and required permissions.
 
 - **Approval identity:** `baseRef` travels from `IssueLabeled` into the candidate binding. A changed base branch is
-  refused when opening a new PR. This is a schema change: use a fresh development session rather than loading old
+  refused before creating a ref and again before opening a new PR. It is a permanent publication failure, so the
+  session ends as `failed` under the existing reducer. Restart from updated issue context in a fresh session and
+  approve its new candidate; automatic rebase/re-proposal is outside this milestone. A race between the two base
+  checks may leave an unused branch, which the adapter never deletes. This is a schema change: use a fresh development session rather than loading old
   sessions without `baseRef`.
 - **Publish journal:** SessionHost supplies read/save callbacks backed by the `puchero.publish` Pi document. Entries
   are keyed by candidate version and verify the full binding and issue. Intent metadata, base tree, the complete blob
@@ -298,7 +303,9 @@ sandbox; each operation mints a fresh token restricted to the configured reposit
   state; conflicts fail visibly.
 - **Read path:** issue context includes paginated comments and root `AGENTS.md` at the captured base SHA. `fetchSource`
   remains a file-list interface, using Git tree/blob reads with concurrency 8; truncated trees and unsupported
-  symlink/submodule entries fail rather than silently changing the repository. Tarball streaming is deferred.
+  symlink/submodule entries fail rather than silently changing the repository. Tarball streaming is deferred. Actual
+  trigger provenance (delivery ID, sender and label) must be appended by the later webhook admission layer; fetching
+  an issue alone cannot infer the event that caused this session.
 - **Checks:** HTTP contract tests cover stage receipts/restarts, lost responses, ref/PR races, binary/deletion/mode
   payloads, base movement, comment deduplication and App token scoping. A SessionHost integration check exercises
   Pi-backed publication receipts across a process restart. The opt-in live scratch App check is documented in

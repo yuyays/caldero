@@ -356,6 +356,8 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
               },
               catch: (error) => new GitHubError({ message: errorMessage(error) }),
             }),
+          // Once a receipt commit starts, finish it despite caller cancellation. Pi still rejects writes
+          // after the task invocation ends or the host closes; this does not extend the task's lifetime.
           save: (progress) =>
             Effect.tryPromise({
               try: () =>

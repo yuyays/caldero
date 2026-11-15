@@ -46,7 +46,10 @@ concurrency; truncated trees, symlinks and submodules fail explicitly. Tarball s
 Publishing requires a `PublishJournal`. SessionHost supplies a Pi document with one entry per candidate version.
 The adapter freezes commit metadata before calling GitHub and stores each stage's receipt before advancing. It never
 force-updates a branch. An ambiguous result is reconciled against the expected commit and open **or closed** PRs;
-an expected branch with no PR finishes only the PR stage. A moved base branch requires a new candidate and approval.
+an expected branch with no PR finishes only the PR stage. A moved base branch ends the session as `failed`; there is
+no restart transition for failed sessions in milestone 1. Start a fresh session from updated context and approve its
+new candidate. The adapter checks the base before creating a branch and again before opening a missing PR. A base
+that moves between those checks may still leave an unused branch; the adapter never deletes or overwrites it.
 
 ### Live scratch contract check (opt-in)
 

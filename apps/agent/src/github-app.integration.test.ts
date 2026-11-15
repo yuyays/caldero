@@ -183,6 +183,27 @@ const adapter = (apiUrl: string) =>
   });
 
 describe("GitHubApp", () => {
+  for (const rateLimit of [
+    { status: 429, retryAfter: null, kind: "retryable" },
+    { status: 403, retryAfter: "1", kind: "retryable" },
+    { status: 403, retryAfter: null, kind: "permanent" },
+  ]) {
+    it.effect(
+      `classifies HTTP ${rateLimit.status} with Retry-After ${rateLimit.retryAfter} as ${rateLimit.kind}`,
+      () =>
+        Effect.gen(function* () {
+          const http = yield* peer((_request, response) => {
+            if (rateLimit.retryAfter !== null)
+              response.setHeader("Retry-After", rateLimit.retryAfter);
+            json(response, { message: "Denied" }, rateLimit.status);
+          });
+          const github = yield* adapter(http.url);
+          expect(
+            yield* github.publish(7, binding, patch, memoryJournal().journal).pipe(Effect.flip),
+          ).toMatchObject({ kind: rateLimit.kind });
+        }),
+    );
+  }
   for (const tree of [
     { truncated: true, tree: [] },
     { truncated: false, tree: [{ path: "link", mode: "120000", type: "blob", sha: "symlink" }] },
@@ -344,9 +365,10 @@ describe("GitHubApp", () => {
         yield* github.publish(7, binding, patch, memoryJournal().journal).pipe(Effect.flip),
       ).toMatchObject({
         kind: "permanent",
-        message: "Base branch moved since validation; a new candidate must be approved",
+        message: "Base branch moved since validation; publication stopped",
       });
       expect(http.pr()).toBeNull();
+      expect(http.branch()).toBeNull();
     }),
   );
   it.effect(

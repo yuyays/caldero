@@ -26,6 +26,7 @@ export interface GitHubAppOptions {
 class HttpFailure extends Schema.TaggedError<HttpFailure>()("HttpFailure", {
   status: Schema.Int,
   message: Schema.String,
+  rateLimited: Schema.optionalKey(Schema.Boolean),
 }) {}
 
 const tokenResponse = Schema.decodeUnknownEffect(Schema.Struct({ token: Schema.String }));
@@ -102,12 +103,14 @@ const publishError = (error: HttpFailure | GitHubError | PublishError | Schema.S
     ? error
     : new PublishError({
         kind:
-          error instanceof HttpFailure &&
-          error.status >= 400 &&
-          error.status < 500 &&
-          error.status !== 429
-            ? "permanent"
-            : "ambiguous",
+          error instanceof HttpFailure && (error.status === 429 || error.rateLimited === true)
+            ? "retryable"
+            : error instanceof HttpFailure &&
+                error.status >= 400 &&
+                error.status < 500 &&
+                error.status !== 429
+              ? "permanent"
+              : "ambiguous",
         message:
           error instanceof Schema.SchemaError ? "Invalid GitHub publish response" : error.message,
       });
@@ -140,6 +143,11 @@ const request = Effect.fn("GitHubApp.request")(function* (
           throw new HttpFailure({
             status: response.status,
             message: `GitHub ${method} ${path}: HTTP ${response.status}`,
+            rateLimited:
+              response.status === 429 ||
+              (response.status === 403 &&
+                (response.headers.has("retry-after") ||
+                  response.headers.get("x-ratelimit-remaining") === "0")),
           });
         }
         return response.json();
@@ -220,6 +228,21 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
     );
     return data === null ? null : (yield* refResponse(data)).object.sha;
   });
+  /** A new publication cannot silently retarget an approval to a changed base branch. */
+  const requireApprovedBase = Effect.fn("GitHubApp.requireApprovedBase")(
+    (api: Api, binding: ApprovalBinding) =>
+      readRef(api, binding.baseRef).pipe(
+        Effect.filterOrFail(
+          (sha) => sha === binding.baseSha,
+          () =>
+            new PublishError({
+              kind: "permanent",
+              message: "Base branch moved since validation; publication stopped",
+            }),
+        ),
+        Effect.asVoid,
+      ),
+  );
   const load = Effect.fn("GitHubApp.loadJournal")(function* (
     issue: number,
     binding: ApprovalBinding,
@@ -272,12 +295,7 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
     });
     let pullRequest = yield* find();
     if (pullRequest === null) {
-      const base = yield* readRef(api, progress.binding.baseRef);
-      if (base !== progress.binding.baseSha)
-        return yield* new PublishError({
-          kind: "permanent",
-          message: "Base branch moved since validation; a new candidate must be approved",
-        });
+      yield* requireApprovedBase(api, progress.binding);
       pullRequest = yield* api("/pulls", {
         title: progress.title,
         body: progress.body,
@@ -490,6 +508,7 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
             kind: "permanent",
             message: `Published branch was removed: ${branch}`,
           });
+        yield* requireApprovedBase(api, binding);
         yield* api("/git/refs", { ref: `refs/heads/${branch}`, sha: expectedCommit }).pipe(
           Effect.catchTag("HttpFailure", (error) =>
             error.status !== 422
