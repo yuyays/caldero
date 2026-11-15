@@ -11,6 +11,12 @@ const decodeIdentity = Schema.decodeUnknownEffect(
   }),
 );
 
+const identityMismatch = () =>
+  new SessionFault({
+    code: "identity_mismatch",
+    message: "Stored session identity does not match this issue; operator repair is required.",
+  });
+
 /** Owns one session's identity, activation resources and sticky instance fault. Temporary failures never latch. */
 export const makeSessionAccess = Effect.fn("makeSessionAccess")(function* <A>(options: {
   readonly readIdentity: Effect.Effect<unknown, SessionHostError>;
@@ -35,13 +41,10 @@ export const makeSessionAccess = Effect.fn("makeSessionAccess")(function* <A>(op
   }, Effect.uninterruptible);
   const openHost = Effect.fn("SessionAccess.open")(function* (newIssue?: number) {
     if (fault !== undefined) return yield* fault;
+    if (newIssue !== undefined && (!Number.isSafeInteger(newIssue) || newIssue < 1))
+      return yield* identityMismatch();
     if (host !== undefined) {
-      if (newIssue !== undefined && issue !== newIssue)
-        return yield* new SessionFault({
-          code: "identity_mismatch",
-          message:
-            "Stored session identity does not match this issue; operator repair is required.",
-        });
+      if (newIssue !== undefined && issue !== newIssue) return yield* identityMismatch();
       return host;
     }
     const saved = yield* options.readIdentity;
@@ -58,16 +61,9 @@ export const makeSessionAccess = Effect.fn("makeSessionAccess")(function* <A>(op
                 }),
             ),
           )).issue;
-    if (
-      identity === undefined ||
-      !Number.isSafeInteger(identity) ||
-      identity < 1 ||
-      (newIssue !== undefined && newIssue !== identity)
-    )
-      return yield* new SessionFault({
-        code: "identity_mismatch",
-        message: "Stored session identity does not match this issue; operator repair is required.",
-      });
+    // Stored identities are schema-validated; new identities were validated before reading storage.
+    if (identity === undefined || (newIssue !== undefined && newIssue !== identity))
+      return yield* identityMismatch();
     issue = identity;
     if (saved === undefined) yield* options.writeIdentity(issue);
     // Failed attempts close immediately. A successful host belongs to the DO instance, not an RPC request.

@@ -29,7 +29,8 @@ The activation module owns a per-instance fault latch, identity validation, seri
 each activation attempt. The modular DO constructor uses an explicitly retained instance scope, because
 Alchemy's constructor layer scope closes when construction returns; failed construction closes the retained scope. Known identity/state faults gate every later open/start in that instance. It closes any
 successful host scope on a later permanent fault and deletes the alarm. Failed temporary attempts close their own
-scope but do not latch, clear the alarm, or prevent a later attempt. Resources of successful opens live with the DO.
+scope but do not latch, clear the alarm, or prevent a later attempt. Startup warm-up logs expected temporary
+activation failures and still exposes the RPC methods, which retry open on the next call. Resources of successful opens live with the DO.
 
 Session state is decoded and its identity checked before initialization writes. Invalid persisted state is never
 silently initialized over. Permanent startup faults are retained by the instance and returned from its declared RPC

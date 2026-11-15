@@ -13,7 +13,8 @@ import { Sandbox } from "./Sandbox.ts";
 import { makeSessionAccess } from "./session-access.ts";
 import { openSessionHost, SessionHostError, type SessionHost } from "./session-host.ts";
 
-const hostError = (error: unknown) => new SessionHostError({ message: errorMessage(error) });
+const activationError = (error: unknown): SessionHostError =>
+  new SessionHostError({ message: errorMessage(error) });
 
 const implementation = Effect.gen(function* () {
   const state = yield* Cloudflare.DurableObjectState;
@@ -39,7 +40,7 @@ const implementation = Effect.gen(function* () {
         const alarmLock = yield* Semaphore.make(1);
         const deleteAlarm = Effect.tryPromise({
           try: () => raw.storage.deleteAlarm(),
-          catch: hostError,
+          catch: activationError,
         });
         const clearAlarm = alarmLock.withPermits(1)(deleteAlarm);
         const arm = Effect.fn("SessionDO.arm")(
@@ -56,7 +57,7 @@ const implementation = Effect.gen(function* () {
                   : Math.min(heartbeat, wake.at);
             yield* Effect.tryPromise({
               try: () => (at === undefined ? raw.storage.deleteAlarm() : raw.storage.setAlarm(at)),
-              catch: hostError,
+              catch: activationError,
             });
             return undefined;
           },
@@ -89,10 +90,12 @@ const implementation = Effect.gen(function* () {
             github,
             Layer.succeed(Projection, index.projection),
           );
-          const serviceContext = yield* Layer.build(services).pipe(Effect.mapError(hostError));
+          const serviceContext = yield* Layer.build(services).pipe(
+            Effect.mapError(activationError),
+          );
           const storage = yield* Effect.tryPromise({
             try: () => openDurableObjectSqliteStorage(raw.storage),
-            catch: hostError,
+            catch: activationError,
           });
           host = yield* openSessionHost({
             storage,
@@ -114,12 +117,12 @@ const implementation = Effect.gen(function* () {
         const sessions = yield* makeSessionAccess({
           readIdentity: Effect.tryPromise({
             try: () => raw.storage.get("identity"),
-            catch: hostError,
+            catch: activationError,
           }),
           writeIdentity: (issue) =>
             Effect.tryPromise({
               try: () => raw.storage.put("identity", { issue }),
-              catch: hostError,
+              catch: activationError,
             }),
           clearAlarm,
           create,
@@ -133,10 +136,16 @@ const implementation = Effect.gen(function* () {
             Effect.catchTag("SessionHostError", Effect.die),
           );
         // Retain known activation faults in the instance so declared RPC methods can report them.
-        const activated = yield* sessions
-          .open()
-          .pipe(Effect.catchTag("SessionFault", () => Effect.succeed(undefined)));
-        if (activated !== undefined) yield* arm(activated.wake());
+        // Startup is best-effort. RPC methods retry open; only known permanent faults latch.
+        yield* sessions.open().pipe(
+          Effect.flatMap((activated) =>
+            activated === undefined ? Effect.void : arm(activated.wake()),
+          ),
+          Effect.catchTag("SessionFault", sessions.fail),
+          Effect.catchTag("SessionHostError", () =>
+            Effect.logWarning("Session activation is unavailable; the next call can retry"),
+          ),
+        );
         return {
           start: Effect.fn("SessionDO.start")(function* (
             issue: number,

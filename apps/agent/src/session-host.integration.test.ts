@@ -141,6 +141,8 @@ const setup = Effect.fn("setup")(function* (
               };
             if (property !== "commit") return Reflect.get(target, property, receiver);
             return async (...args: Parameters<typeof durable.commit>) => {
+              // Explicit session-fault acceptance criterion: no document/task writes on an unreadable open.
+              // Count the public Pi Storage.commit variants at the persistence seam.
               if (options.corruptState?.())
                 corruptWrites += args[0]
                   .flat()

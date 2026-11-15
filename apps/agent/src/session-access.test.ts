@@ -34,7 +34,7 @@ describe("Session activation", () => {
           });
         expect(access.faulted()).toBe(true);
         expect({ writes, opens }).toEqual({ writes: 0, opens: 0 });
-        expect(alarmClears).toBeGreaterThan(0);
+        expect(alarmClears).toBe(3);
       }),
   );
   it.effect(
@@ -63,6 +63,8 @@ describe("Session activation", () => {
           code: "identity_mismatch",
         });
         expect(opens).toBe(0);
+        expect(alarmClears).toBe(2);
+        alarmClears = 0;
         const unreadable = yield* makeSessionAccess({
           ...options,
           create: () =>
@@ -74,7 +76,7 @@ describe("Session activation", () => {
           code: "state_unreadable",
         });
         expect(unreadable.faulted()).toBe(true);
-        expect(alarmClears).toBeGreaterThan(0);
+        expect(alarmClears).toBe(1);
       }),
   );
   it.effect(
