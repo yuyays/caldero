@@ -97,7 +97,7 @@ export const Instruction = Schema.TaggedUnion({
   AbortRun: { instructionId: Schema.String, runId: Schema.Int },
   Publish: { instructionId: Schema.String, binding: ApprovalBinding },
   Reconcile: { instructionId: Schema.String, binding: ApprovalBinding },
-  Project: { instructionId: Schema.String, revision: Schema.Int },
+  Project: { instructionId: Schema.String, revision: Schema.Int, snapshot: Schema.String },
   Comment: { instructionId: Schema.String, key: Schema.String, text: Schema.String },
 });
 export type Instruction = typeof Instruction.Type;
@@ -163,14 +163,22 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
   const applied = (
     change: Partial<SessionState>,
     instructions: ReadonlyArray<(id: string) => Instruction> = [],
-  ): Decision => ({
-    state: { ...state, ...change, revision, updatedAt: now },
-    instructions: [
-      ...instructions,
-      (instructionId: string) => Instruction.cases.Project.make({ instructionId, revision }),
-    ].map((make, index) => make(id(index))),
-    result: "applied",
-  });
+  ): Decision => {
+    const next = { ...state, ...change, revision, updatedAt: now };
+    return {
+      state: next,
+      instructions: [
+        ...instructions,
+        (instructionId: string) =>
+          Instruction.cases.Project.make({
+            instructionId,
+            revision,
+            snapshot: JSON.stringify(next),
+          }),
+      ].map((make, index) => make(id(index))),
+      result: "applied",
+    };
+  };
   const submit =
     (runId: number, mode: "start" | "steer", text: string) => (instructionId: string) =>
       Instruction.cases.Submit.make({ instructionId, runId, mode, text });

@@ -14,9 +14,11 @@
     "@earendil-works/pi-ai": "1.5.2",
     "@earendil-works/pi-durable": "1.5.2",
     "@earendil-works/pi-env": "1.5.2",
+    "@puchero/contracts": "workspace:*",
     "@puchero/domain": "workspace:*",
     "alchemy": "2.0.0-beta.87",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "jose": "^6.2.17"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

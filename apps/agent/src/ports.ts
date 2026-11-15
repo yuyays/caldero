@@ -1,4 +1,6 @@
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+import type { Patch } from "@puchero/contracts/inbox";
+export { FileChange, Patch } from "@puchero/contracts/inbox";
 import { ApprovalBinding, type Repo, type SessionState } from "@puchero/domain";
 import { Context, type Effect, Schema } from "effect";
 
@@ -10,27 +12,6 @@ export const errorMessage = (error: unknown) =>
   typeof error.message === "string"
     ? error.message
     : String(error);
-
-/** One changed file of a patch. Content is base64 so binary files survive JSON. */
-export const FileChange = Schema.Union([
-  Schema.Struct({
-    path: Schema.String,
-    change: Schema.Literal("write"),
-    content: Schema.String,
-    executable: Schema.Boolean,
-  }),
-  Schema.Struct({ path: Schema.String, change: Schema.Literal("delete") }),
-]);
-export type FileChange = typeof FileChange.Type;
-
-/** A frozen change set against the session's base commit. `digest` names it in approvals. */
-export const Patch = Schema.Struct({
-  digest: Schema.String,
-  /** Human-readable `git diff` of the change set, for the inbox. */
-  diff: Schema.String,
-  files: Schema.Array(FileChange),
-});
-export type Patch = typeof Patch.Type;
 
 /** The result of validating the workspace: a frozen patch and what the checks printed. */
 export interface Validation {
@@ -190,5 +171,10 @@ export class ProjectionError extends Schema.TaggedError<ProjectionError>()("Proj
 /** The session index the inbox lists. Keeps a session's newest revision; older ones are ignored. */
 export class Projection extends Context.Service<
   Projection,
-  { readonly project: (state: SessionState) => Effect.Effect<void, ProjectionError> }
+  {
+    readonly project: (
+      state: SessionState,
+      instructionId: string,
+    ) => Effect.Effect<void, ProjectionError>;
+  }
 >()("puchero/Projection") {}

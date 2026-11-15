@@ -173,6 +173,24 @@ const propose = Effect.fn("propose")(function* (
 });
 
 describe("SessionHost", () => {
+  it.effect("keeps session state and cancellation available when a frozen patch blob is lost", () =>
+    Effect.gen(function* () {
+      const { host, store } = yield* setup();
+      yield* propose(host);
+      store.blobs.clear();
+      const missing = yield* host.view();
+      expect(missing).toMatchObject({
+        state: { status: "awaitingApproval" },
+        patch: null,
+        patchUnavailable: true,
+      });
+      expect(
+        yield* host.deliver(Events.Cancel.make({ actor: "ann" }), "cancel-after-blob-loss"),
+      ).toBe("applied");
+      expect((yield* host.view()).state.status).toBe("cancelled");
+    }),
+  );
+
   it.effect("retains a publish receipt in Pi when its host dies before returning the result", () =>
     Effect.gen(function* () {
       let interrupted = false;

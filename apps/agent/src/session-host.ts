@@ -21,6 +21,8 @@ import {
   type ToolRegistration,
   type Wake,
 } from "@earendil-works/pi-durable";
+import type { SessionView } from "@puchero/contracts/inbox";
+export type { SessionView } from "@puchero/contracts/inbox";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import {
   type DecisionResult,
@@ -31,7 +33,7 @@ import {
   type SessionEvent,
   SessionState,
 } from "@puchero/domain";
-import { Cause, Clock, Effect, Exit, Schema } from "effect";
+import { Cause, Clock, Effect, Exit, Result, Schema } from "effect";
 import {
   errorMessage,
   type Checkpoint,
@@ -39,7 +41,6 @@ import {
   GitHubError,
   type PublishJournal,
   PublishProgress,
-  type Patch,
   Projection,
   PublishError,
   Workspace,
@@ -97,13 +98,6 @@ export class SessionHostError extends Schema.TaggedError<SessionHostError>()("Se
 }) {}
 
 const hostError = (error: unknown) => new SessionHostError({ message: errorMessage(error) });
-
-/** What the inbox shows of one session. */
-export interface SessionView {
-  readonly state: SessionState;
-  /** The candidate's frozen patch, while there is one. */
-  readonly patch: Patch | null;
-}
 
 export interface SessionHostOptions {
   readonly storage: Storage;
@@ -226,7 +220,8 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
         ),
       Comment: ({ key, text }) =>
         github.comment(state.repo, state.issue, key, text).pipe(Effect.as(undefined)),
-      Project: () => projection.project(state).pipe(Effect.as(undefined)),
+      Project: ({ snapshot, instructionId }) =>
+        projection.project(decodeState(snapshot), instructionId).pipe(Effect.as(undefined)),
       // Both act on Pi itself, in the task.
       AbortRun: () => Effect.succeed(undefined),
       Submit: () => Effect.succeed(undefined),
@@ -652,11 +647,12 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
     view: Effect.fn("SessionHost.view")(function* () {
       const state = yield* pi(readState);
       const candidate = state.candidate;
-      const patch =
-        candidate === null
-          ? null
-          : yield* workspace.patch(candidate.binding.patchDigest).pipe(Effect.mapError(hostError));
-      return { state, patch } satisfies SessionView;
+      if (candidate === null) return { state, patch: null } satisfies SessionView;
+      const patch = yield* workspace.patch(candidate.binding.patchDigest).pipe(Effect.result);
+      // Missing/corrupt blobs must not hide authoritative state or prevent cancellation.
+      return Result.isFailure(patch)
+        ? ({ state, patch: null, patchUnavailable: true } satisfies SessionView)
+        : ({ state, patch: patch.success } satisfies SessionView);
     }),
 
     /** The alarm: due sleeps, work a lost instance left, and failed runs not yet reported. */
