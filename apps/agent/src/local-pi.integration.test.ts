@@ -1,4 +1,6 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
@@ -72,6 +74,22 @@ describe("Installed Pi profile", () => {
       });
       expect((yield* openLocalPi({ cwd: root, agentDir: root })).thinkingLevel).toBe("high");
     }),
+  );
+  it.effect(
+    "the CLI verifies the Pi connection without starting an issue or printing credentials",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* profile({ defaultProvider: "openai", defaultModel: "gpt-6.1-sol" });
+        const { stdout, stderr } = yield* Effect.promise(() =>
+          promisify(execFile)(
+            process.execPath,
+            [join(import.meta.dirname, "local-cli.ts"), "--pi-dir", root, "--check-connection"],
+            { env: { PATH: "/usr/bin:/bin", HOME: root } },
+          ),
+        );
+        expect(stdout).toContain("Pi: openai/gpt-6.1-sol, thinking medium");
+        expect(`${stdout}${stderr}`).not.toContain("fixture-only-no-network");
+      }),
   );
   it.effect("lets the SDK refresh and persist a saved OAuth login without an API key", () =>
     Effect.gen(function* () {
