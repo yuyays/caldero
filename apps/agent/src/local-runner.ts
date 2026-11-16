@@ -36,11 +36,23 @@ export const validateLocalIssue = Effect.fn("validateLocalIssue")(function* (
   return yield* validateLocalChecks(checks);
 });
 
-const lockError = (code: string) =>
-  new LocalRunnerError({
+const lockError = (code: string) => {
+  const reason =
+    code === "ELOCKED"
+      ? "locked"
+      : ["ENOENT", "EACCES", "EPERM", "ENOTDIR", "64", "66", "69"].includes(code)
+        ? "configuration"
+        : undefined;
+  return new LocalRunnerError({
     message: `Could not lock the local session (${code}); another runner may own it`,
-    reason: code === "ELOCKED" ? "locked" : "configuration",
+    ...(reason === undefined ? {} : { reason }),
   });
+};
+
+const errorCode = (error: unknown) =>
+  typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+    ? error.code
+    : "unknown";
 
 const localIoError = (message: string, error: unknown) =>
   new LocalRunnerError({
@@ -78,7 +90,7 @@ export const holdLocalLock = Effect.fn("holdLocalLock")(function* (
           ],
           { stdio: ["pipe", "pipe", "ignore"], env: { PATH: "/usr/bin:/bin" } },
         ),
-      catch: () => lockError("spawn"),
+      catch: (error) => lockError(errorCode(error)),
     }),
     (value) =>
       Effect.promise(
@@ -93,7 +105,7 @@ export const holdLocalLock = Effect.fn("holdLocalLock")(function* (
   yield* Effect.tryPromise({
     try: () =>
       new Promise<void>((resolve, reject) => {
-        child.once("error", () => reject(lockError("flock unavailable")));
+        child.once("error", (error) => reject(lockError(errorCode(error))));
         child.once("close", (code) => reject(lockError(code === 73 ? "ELOCKED" : String(code))));
         child.stdout.once("data", (data) => {
           if (data.toString() === "locked\n") resolve();

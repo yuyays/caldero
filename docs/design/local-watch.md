@@ -28,13 +28,13 @@ on GitHub issue state.
 Settled receipts suppress repeated opening of terminal sessions. If the process
 dies after publication but before recording settlement, reopening the issue's
 SQLite recovers its existing PR. Failed/cancelled sessions stay terminal; changing
-labels does not start another attempt. Legacy paused sessions are reported once
-and require explicit user input through the existing session workflow.
+labels does not start another attempt. Legacy paused sessions are reported once;
+the watcher offers no automatic restart of paused or terminal sessions.
 
 Discovery and transient issue failures log and retry on the next cycle. Permanent
-session faults, invalid filesystem/lock configuration and a lock held by another
-issue runner are reported and suppressed;
-repair/recovery of those issues is explicit through the single-issue runner. Receipt
+session faults and invalid filesystem/lock configuration are reported and suppressed;
+lock contention and unknown spawn/IPC failures remain pending for the next cycle.
+Repair/recovery of suppressed issues is explicit through the single-issue runner. Receipt
 write failures stop the watcher before further admission. Watch receipts grow by
 one entry per issue; no retention/compaction policy is introduced in this version.
 
@@ -44,6 +44,8 @@ one entry per issue; no retention/compaction policy is introduced in this versio
 `--poll-seconds` defaults to 60 and must be at least 1. `--state-root` selects the
 watch repository directory (default `~/.local/state/puchero/OWNER/REPO`), with issue
 directories underneath. The single-issue `--state-dir` retains its existing meaning.
+For a custom watch root, single-issue recovery must use `--state-dir <root>/<issue>`
+to address that same session and lock.
 
 First Ctrl-C/SIGTERM stops further polling/admission and lets the current issue
 finish normally. Second signal exits immediately; pending receipts and the issue
@@ -55,7 +57,8 @@ existing Stop behavior is unchanged. No automatic merge or system daemon is adde
 1. Paginated discovery excludes PRs and admits each eligible issue once.
 2. Checked issues publish serially; restart does not republish settled issues.
 3. Lost completion receipts recover the same PR, even after label removal.
-4. Queued idle issues that become ineligible produce no PR.
+4. Queued idle issues absent from the latest successful scan produce no PR. Changes
+   after a scan are observed by the next scan, not between its serial jobs.
 5. Scan failure does not abandon saved work or admit unverified idle issues.
 6. Stop finishes the current issue and leaves queued work for restart.
 7. Repository/session locks prevent concurrent ownership; malformed receipts are

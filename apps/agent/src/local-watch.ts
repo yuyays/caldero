@@ -26,7 +26,7 @@ export const localWatchIssueError = (
     message: error.message,
     retryable:
       !(error instanceof SessionFault) &&
-      !(error instanceof LocalRunnerError && error.reason !== undefined),
+      !(error instanceof LocalRunnerError && error.reason === "configuration"),
   });
 
 const issueNumber = Schema.Int.check(Schema.isGreaterThan(0));
@@ -37,6 +37,13 @@ const receipt = Schema.Struct({
   settled: Schema.Array(issueNumber),
 });
 const decodeReceipt = Schema.decodeUnknownEffect(Schema.fromJsonString(receipt));
+const settledStatuses: ReadonlySet<Status> = new Set([
+  "published",
+  "failed",
+  "cancelled",
+  "rejected",
+  "awaitingApproval",
+]);
 
 /** Persist scheduling receipts before work starts. The issue SQLite owns execution and publication. */
 export const openLocalWatcher = Effect.fn("openLocalWatcher")(function* (options: {
@@ -140,6 +147,7 @@ export const openLocalWatcher = Effect.fn("openLocalWatcher")(function* (options
           yield* Effect.logInfo(`Issue #${issue}: ${outcome.success}`);
           // A failed scan cannot establish whether an idle issue is still eligible.
           if (outcome.success === "idle" && eligible === undefined) continue;
+          if (outcome.success !== "idle" && !settledStatuses.has(outcome.success)) continue;
         }
         yield* save({
           ...state,

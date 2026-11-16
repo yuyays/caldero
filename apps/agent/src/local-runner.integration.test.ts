@@ -162,12 +162,12 @@ describe("Local durable runner", () => {
         pi: scriptedModels(),
       };
       const first = yield* openLocalIssue(options).pipe(Effect.provide(github.layer));
-      expect(
-        yield* openLocalIssue(options).pipe(Effect.provide(github.layer), Effect.flip),
-      ).toMatchObject({
+      const busy = yield* openLocalIssue(options).pipe(Effect.provide(github.layer), Effect.flip);
+      expect(busy).toMatchObject({
         _tag: "LocalRunnerError",
         message: expect.stringContaining("ELOCKED"),
       });
+      expect(localWatchIssueError(busy).retryable).toBe(true);
       yield* first.drain();
       expect((yield* first.view()).state.status).toBe("published");
       expect(github.state.pullRequests).toHaveLength(1);

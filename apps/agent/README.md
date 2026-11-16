@@ -193,6 +193,11 @@ and storage. Repeating the command resumes admitted work; terminal sessions are
 not retried. Removing a label stops admission of an idle issue, not work already
 in progress. The first Ctrl-C finishes the current issue and stops; the second
 exits immediately. Keep the same state root to preserve publication receipts.
+To open one of these sessions manually, use `local --issue N --state-dir <state-root>/N`
+with the same checks and GitHub configuration. Omitting that flag uses the default
+state path, which is a separate session if you selected a custom watch root.
+Eligibility is checked at scan time: closing an issue while an earlier issue runs
+does not change the current scan's queue. The next successful scan rechecks idle work.
 This is a foreground command on this machine, not an installed background daemon.
 See [watch design](../../docs/design/local-watch.md) for recovery and failure rules.
 

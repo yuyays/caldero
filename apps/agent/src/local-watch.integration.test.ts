@@ -16,6 +16,51 @@ const directory = Effect.acquireRelease(
 );
 
 describe("Local issue watcher", () => {
+  it.effect("keeps active statuses pending until a terminal result is reported", () =>
+    Effect.gen(function* () {
+      const stateRoot = yield* directory;
+      const runs: number[] = [];
+      let stop = Effect.void;
+      for (const status of ["running", "validating", "publishing", "published"] as const) {
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const watcher = yield* openLocalWatcher({
+              repo,
+              stateRoot,
+              pollSeconds: 60,
+              discover: Effect.succeed([7]),
+              runIssue: Effect.fn("reportActiveStatus")(function* (issue: number) {
+                runs.push(issue);
+                yield* stop;
+                return status;
+              }),
+            });
+            stop = watcher.stop;
+            yield* watcher.run;
+          }),
+        );
+      }
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const watcher = yield* openLocalWatcher({
+            repo,
+            stateRoot,
+            pollSeconds: 60,
+            discover: Effect.succeed([7, 8]),
+            runIssue: Effect.fn("reportNextIssue")(function* (issue: number) {
+              runs.push(issue);
+              yield* stop;
+              return "published" as const;
+            }),
+          });
+          stop = watcher.stop;
+          yield* watcher.run;
+        }),
+      );
+      expect(runs).toEqual([7, 7, 7, 7, 8]);
+    }),
+  );
+
   it.effect("retains idle admissions through a failed scan and retries after recovery", () =>
     Effect.gen(function* () {
       const stateRoot = yield* directory;
