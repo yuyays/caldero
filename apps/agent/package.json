@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
+    "local": "node src/local-cli.ts",
     "typecheck": "effect-tsgo tsc --noEmit",
     "test": "vp test run"
   },
@@ -12,6 +13,7 @@
     "@alchemy.run/cloudflare": "2.0.0-beta.87",
     "@earendil-works/chord": "1.5.2",
     "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-coding-agent": "1.5.2",
     "@earendil-works/pi-durable": "1.5.2",
     "@earendil-works/pi-env": "1.5.2",
     "@puchero/contracts": "workspace:*",
