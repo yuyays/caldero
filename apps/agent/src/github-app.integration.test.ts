@@ -62,6 +62,43 @@ const json = (response: ServerResponse, value: unknown, status = 200) => {
   response.end(JSON.stringify(value));
 };
 
+describe("GitHub issue discovery", () => {
+  it.effect("paginates open labeled issues and excludes pull requests", () =>
+    Effect.gen(function* () {
+      const pages: string[] = [];
+      const http = yield* peer((request, response) => {
+        if (request.url === "/app/installations/42/access_tokens") {
+          request.resume();
+          json(response, { token: "token" });
+          return;
+        }
+        const url = new URL(request.url ?? "", "http://fixture");
+        expect(url.pathname).toBe("/repos/acme/app/issues");
+        expect(url.searchParams.get("state")).toBe("open");
+        expect(url.searchParams.get("labels")).toBe("agent work");
+        const page = url.searchParams.get("page") ?? "";
+        pages.push(page);
+        json(
+          response,
+          page === "1"
+            ? Array.from({ length: 100 }, (_, index) => ({ number: index + 1, pull_request: {} }))
+            : [{ number: 107 }, { number: 108 }],
+        );
+      });
+      const github = yield* GitHubApp.make({
+        appId: "1",
+        installationId: 42,
+        privateKey,
+        repo,
+        author: { name: "bot", email: "bot@example.test" },
+        apiUrl: http.url,
+      });
+      expect(yield* github.listOpenLabeledIssues("agent work")).toEqual([107, 108]);
+      expect(pages).toEqual(["1", "2"]);
+    }),
+  );
+});
+
 /** GitHub's publication protocol, with remote state independent of the client's journal. */
 const publisherPeer = () =>
   Effect.gen(function* () {

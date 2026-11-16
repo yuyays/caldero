@@ -13,6 +13,7 @@ import { openSessionHost, type SessionHostOptions } from "./session-host.ts";
 
 export class LocalRunnerError extends Schema.TaggedError<LocalRunnerError>()("LocalRunnerError", {
   message: Schema.String,
+  reason: Schema.optionalKey(Schema.Literals(["locked", "unavailable"])),
 }) {}
 
 export const validateLocalIssue = Effect.fn("validateLocalIssue")(
@@ -32,10 +33,14 @@ export const validateLocalIssue = Effect.fn("validateLocalIssue")(
 const lockError = (code: string) =>
   new LocalRunnerError({
     message: `Could not lock the local session (${code}); another runner may own it`,
+    reason: code === "ELOCKED" ? "locked" : "unavailable",
   });
 
 /** A kernel flock has no stale timeout: pausing a runner cannot hand its workspace to another process. */
-const holdSessionLock = Effect.fn("holdSessionLock")(function* (stateDir: string) {
+export const holdLocalLock = Effect.fn("holdLocalLock")(function* (
+  stateDir: string,
+  filename = ".runner.lock",
+) {
   const child = yield* Effect.acquireRelease(
     Effect.try({
       try: () =>
@@ -47,7 +52,7 @@ const holdSessionLock = Effect.fn("holdSessionLock")(function* (stateDir: string
             "--conflict-exit-code",
             "73",
             "--no-fork",
-            join(stateDir, ".runner.lock"),
+            join(stateDir, filename),
             process.execPath,
             "-e",
             "process.stdout.write('locked\\n'); process.stdin.resume()",
@@ -112,6 +117,8 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   readonly stateDir: string;
   readonly checks: ReadonlyArray<string>;
   readonly pi: Pick<SessionHostOptions, "models" | "model" | "thinkingLevel">;
+  /** Watch discovery can reopen saved work without admitting an idle, now-ineligible issue. */
+  readonly admit?: boolean;
 }) {
   yield* validateLocalIssue(options.issue, options.checks);
   const root = join(options.stateDir, "workspace");
@@ -124,7 +131,7 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
       ]),
     catch: () => new LocalRunnerError({ message: "Could not create the local session directory" }),
   });
-  yield* holdSessionLock(options.stateDir);
+  yield* holdLocalLock(options.stateDir);
   const storage = yield* Effect.acquireRelease(
     Effect.tryPromise({
       try: () => openNodeSqliteStorage(join(options.stateDir, "session.sqlite")),
@@ -153,7 +160,7 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
     },
     ...options.pi,
   }).pipe(Effect.provide(serviceContext));
-  if ((yield* host.view()).state.status === "idle") {
+  if (options.admit !== false && (yield* host.view()).state.status === "idle") {
     const context = yield* github.fetchIssueContext(options.repo, options.issue);
     yield* host.deliver(Events.IssueLabeled.make(context), `local-issue:${options.issue}`);
   }
