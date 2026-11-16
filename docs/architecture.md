@@ -38,8 +38,9 @@ establish deployed Cloudflare behavior.
 ```mermaid
 flowchart LR
     Input[Admitted issue or follow-up] --> Host[SessionHost]
-    Host --> Reducer[Pure domain reducer]
-    Reducer --> Tasks[Committed Pi durable tasks]
+    Host -->|decide| Reducer[Pure domain reducer]
+    Reducer -->|state and instruction data| Host
+    Host -->|commit state and instruction tasks| Tasks[Pi durable tasks]
     Tasks --> Agent[Pi coding run]
     Agent --> Validate[Freeze candidate and run configured checks]
     Validate -->|checks pass| Publish[Journaled GitHub publication]
@@ -122,6 +123,7 @@ flowchart TD
     Worker -->|acknowledge| GH
     UI[React inbox] -->|Access-authenticated API| Worker
     Worker -->|list and audit reads| D1[D1: summary and audit copy]
+    Worker -->|authoritative detail and actions| DO
     DO --> Core[Shared SessionHost and Pi Durable]
     Core <--> SQLite[DO SQLite: authoritative session and task state]
     Core -->|wake requests| Alarm[DO alarm wrapper]
@@ -156,16 +158,18 @@ one issue, but that does not impose a global concurrency limit.
 
 ## Earlier diagrams and future work
 
-The Worker/SessionDO/Container diagram describes the cloud path above. The
-general-purpose “any trigger → session → tools → results” diagram describes a
-possible broader product, not implemented Slack/cron/Notion support. The diagram
-containing SchedulerDO describes future concurrency and team policy, not a
-module currently in this repository. Neither future shape is a deployment plan.
+Earlier discussions proposed a general-purpose “any trigger → session → tools →
+results” shape and a SchedulerDO for global/per-team run slots. These were broader
+product proposals, not diagrams or modules currently in this repository. Slack,
+cron and Notion support, and team-aware scheduling, remain future work. The
+Worker/SessionDO/Container shape is the implemented cloud path documented above.
 
 Progress/status for local runs, watcher supervision, explicit terminal retries,
 CI/review follow-ups, stronger local isolation and per-task resource limits remain
-separate work. Agent skills can guide coding and verification inside a session;
-they do not supply those runtime guarantees.
+separate work. Agent skills are workflow instructions, not runtime guarantees.
+The current harness passes issue and repository `AGENTS.md` context; it does not
+load interactive Pi skills. Adapting verification or review skills is a future
+integration and would not replace these runtime responsibilities.
 
 ## Repository and document map
 
