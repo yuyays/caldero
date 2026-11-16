@@ -126,7 +126,9 @@ describe("Local durable runner", () => {
         pi: scriptedModels(),
       }).pipe(Effect.provide(github.layer));
       yield* host.drain();
-      expect((yield* host.view()).state).toMatchObject({ status: "failed", attempts: 3 });
+      const { state } = yield* host.view();
+      expect(state).toMatchObject({ status: "failed", attempts: 3 });
+      expect(state.failure).toContain("(exit 1)");
       expect(github.state.pullRequests).toHaveLength(0);
     }),
   );
