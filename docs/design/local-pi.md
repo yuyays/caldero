@@ -1,5 +1,8 @@
 # Use this machine's Pi profile
 
+See the [architecture overview](../architecture.md) for how this local adapter
+shares the session core with the Cloudflare path.
+
 Puchero's local runner uses Pi's official `pi-coding-agent` SDK `ModelRuntime` and `SettingsManager`.
 They load the existing agent directory (including `PI_CODING_AGENT_DIR`), provider configuration, saved login,
 default model and its per-model or global thinking level. The SDK owns OAuth refresh, file locking and persistence; Puchero does not parse,

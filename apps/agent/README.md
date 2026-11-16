@@ -1,5 +1,8 @@
 # Agent local development
 
+For the shared core, current local execution, cloud implementation status and
+future capabilities, start with the [architecture overview](../../docs/architecture.md).
+
 From the repository root:
 
 ```sh

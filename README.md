@@ -1,12 +1,27 @@
 # puchero
 
-Full-stack TypeScript app with React, TanStack Router/Query, Effect v4, Drizzle,
-PostgreSQL, and Vite+, managed with pnpm. The API runs on Node.js.
+Puchero runs a durable coding agent from a labeled GitHub issue, checks its changes,
+and opens a pull request automatically when the checks pass. Review and merging
+happen on GitHub.
+
+Start with the [current architecture](docs/architecture.md): a shared Effect/Pi
+Durable session core with local and Cloudflare execution adapters. The local
+runner/watch path works with an installed Pi profile and GitHub App. The Cloudflare
+Worker, container and React inbox path is implemented but deployment remains unverified.
 See `engines` in `package.json` for required versions. [MIT License](LICENSE).
 
-## Setup
+## Run the agent
 
-Skip the install if the generator already installed dependencies.
+- [Local Pi setup and GitHub App configuration](apps/agent/README.md#run-locally-with-your-installed-pi-profile)
+- [Watch labeled issues locally](apps/agent/README.md#watch-labeled-issues-locally)
+- [Cloudflare local development](apps/agent/README.md#agent-local-development) and
+  [production configuration](apps/agent/README.md#production-configuration-no-deployment-performed)
+
+The React inbox currently reads the Worker backend, not local-runner SQLite.
+The separate Node/PostgreSQL starter API below is not required for the local agent.
+
+## Optional starter API setup
+
 Set `DATABASE_URL` in `apps/api/.env` to a running PostgreSQL database first.
 
 The API loads `.env` through Effect's configuration provider, with environment
@@ -17,12 +32,13 @@ values, and file read errors still fail startup. Restart the API after editing `
 pnpm install
 pnpm db:generate
 pnpm db:migrate
-pnpm dev
+pnpm dev:api
 ```
 
-`pnpm dev:web` or `pnpm dev:api` starts one server. The web app is now the agent review inbox; see [agent setup](apps/agent/README.md). It proxies
-`/api` to the agent on 1337 and `/docs` to the separate Node starter API; ports are set in `apps/web/vite.config.ts` and
-`apps/api/.env`.
+`pnpm dev:api` starts the Node starter API. `pnpm dev:web` starts the React inbox;
+follow [agent setup](apps/agent/README.md) for its backend. The frontend proxies
+`/api` to the agent on 1337 and `/docs` to the separate Node starter API; ports are
+set in `apps/web/vite.config.ts` and `apps/api/.env`.
 
 ## Verify changes
 

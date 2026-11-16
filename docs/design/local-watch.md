@@ -1,5 +1,8 @@
 # Local issue watch mode
 
+See the [architecture overview](../architecture.md) for the current execution
+diagrams and the scope of the shared session core.
+
 Run `local --watch --check COMMAND` with the same installed Pi profile and GitHub
 App configuration as the single-issue runner. Watch mode polls the configured
 repository for open issues carrying `agent` (overridable with `--label`). GitHub's
