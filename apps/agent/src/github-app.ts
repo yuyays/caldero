@@ -72,6 +72,14 @@ const issueResponse = Schema.decodeUnknownEffect(
 const commentsResponse = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ body: Schema.String })),
 );
+const labeledIssuesResponse = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      number: Schema.Int.check(Schema.isGreaterThan(0)),
+      pull_request: Schema.optionalKey(Schema.Unknown),
+    }),
+  ),
+);
 const githubError = (error: HttpFailure) => new GitHubError({ message: error.message });
 const readError = (error: HttpFailure | GitHubError | Schema.SchemaError) =>
   error instanceof GitHubError
@@ -319,7 +327,7 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
     yield* journal.save({ ...progress, refCreated: true, pullRequest });
     return pullRequest;
   });
-  return GitHub.of({
+  const github = GitHub.of({
     fetchIssueContext: Effect.fn("GitHubApp.fetchIssueContext")(function* (
       repo: Repo,
       issue: number,
@@ -566,6 +574,36 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
       ),
     ),
   });
+  return {
+    ...github,
+    /** Host-only discovery stays outside the session's GitHub port. REST also lists PRs here. */
+    listOpenLabeledIssues: Effect.fn("GitHubApp.listOpenLabeledIssues")(
+      function* (label: string) {
+        const api = yield* client(options.repo);
+        const issues: number[] = [];
+        for (let page = 1; ; page++) {
+          const rows = yield* labeledIssuesResponse(
+            yield* api(
+              `/issues?state=open&labels=${segment(label)}&sort=created&direction=asc&per_page=100&page=${page}`,
+            ),
+          );
+          issues.push(
+            ...rows.filter((row) => row.pull_request === undefined).map((row) => row.number),
+          );
+          if (rows.length < 100) return [...new Set(issues)];
+        }
+      },
+      Effect.mapError(
+        (error) =>
+          new GitHubError({
+            message:
+              error instanceof HttpFailure
+                ? error.message
+                : "Invalid GitHub issue discovery response",
+          }),
+      ),
+    ),
+  };
 });
 
 export const GitHubApp = {
