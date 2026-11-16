@@ -33,7 +33,7 @@ export const validateLocalIssue = Effect.fn("validateLocalIssue")(function* (
 ) {
   if (!Number.isSafeInteger(issue) || issue < 1)
     return yield* new LocalRunnerError({ message: "Provide a positive --issue NUMBER" });
-  yield* validateLocalChecks(checks);
+  return yield* validateLocalChecks(checks);
 });
 
 const lockError = (code: string) =>
