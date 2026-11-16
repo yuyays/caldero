@@ -1,0 +1,110 @@
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import lockfile from "proper-lockfile";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { Events, type Repo } from "@puchero/domain";
+import { Effect, Layer } from "effect";
+import { makeDiskWorkspaceStore } from "./disk-workspace-store.ts";
+import { LocalPiError } from "./local-pi.ts";
+import { LocalWorkspace } from "./local-workspace.ts";
+import { GitHub, Projection } from "./ports.ts";
+import { openSessionHost, type SessionHostOptions } from "./session-host.ts";
+
+/** Local commands get a small environment, but still run with this user's filesystem permissions. */
+class LocalExecutionEnv extends NodeExecutionEnv {
+  readonly home: string;
+  constructor(cwd: string, home: string) {
+    super({ cwd });
+    this.home = home;
+  }
+  override exec(...[command, options, context]: Parameters<NodeExecutionEnv["exec"]>) {
+    return super.exec(
+      command,
+      {
+        ...options,
+        inheritEnv: false,
+        env: {
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          HOME: this.home,
+          LANG: "C.UTF-8",
+          ...options?.env,
+        },
+      },
+      context,
+    );
+  }
+}
+
+/** Reopening the same state directory resumes the same durable issue; no cloud deployment is involved. */
+export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
+  readonly repo: Repo;
+  readonly issue: number;
+  readonly stateDir: string;
+  readonly checks: ReadonlyArray<string>;
+  readonly pi: Pick<SessionHostOptions, "models" | "model" | "thinkingLevel">;
+}) {
+  if (
+    !Number.isSafeInteger(options.issue) ||
+    options.issue < 1 ||
+    options.checks.length === 0 ||
+    options.checks.some((check) => !check.trim())
+  )
+    return yield* new LocalPiError({
+      message: "A positive issue number and explicit validation checks are required",
+    });
+  const root = join(options.stateDir, "workspace");
+  const home = join(options.stateDir, "shell-home");
+  yield* Effect.tryPromise({
+    try: () =>
+      Promise.all([
+        mkdir(home, { recursive: true, mode: 0o700 }),
+        mkdir(root, { recursive: true, mode: 0o700 }),
+      ]),
+    catch: () => new LocalPiError({ message: "Could not create the local session directory" }),
+  });
+  yield* Effect.acquireRelease(
+    Effect.tryPromise({
+      try: () => lockfile.lock(options.stateDir, { retries: 0 }),
+      catch: () =>
+        new LocalPiError({
+          message: "This local session is already running or its state directory cannot be locked",
+        }),
+    }),
+    (release) => Effect.promise(() => release()),
+  );
+  const storage = yield* Effect.acquireRelease(
+    Effect.tryPromise({
+      try: () => openNodeSqliteStorage(join(options.stateDir, "session.sqlite")),
+      catch: () => new LocalPiError({ message: "Could not open local session storage" }),
+    }),
+    (value) => Effect.promise(() => value.close(BACKGROUND_CONTEXT)),
+  );
+  const github = yield* GitHub;
+  const services = Layer.mergeAll(
+    LocalWorkspace.layer({
+      root,
+      checks: options.checks,
+      store: makeDiskWorkspaceStore(join(options.stateDir, "blobs")),
+      env: new LocalExecutionEnv(join(root, "work"), home),
+    }).pipe(Layer.provide(Layer.succeed(GitHub, github))),
+    Layer.succeed(GitHub, github),
+    Layer.succeed(Projection, { project: Effect.fn("LocalProjection.project")(() => Effect.void) }),
+  );
+  const serviceContext = yield* Layer.build(services);
+  const host = yield* openSessionHost({
+    storage,
+    session: {
+      sessionId: `${options.repo.owner}/${options.repo.name}#${options.issue}`,
+      repo: options.repo,
+      issue: options.issue,
+    },
+    ...options.pi,
+  }).pipe(Effect.provide(serviceContext));
+  if ((yield* host.view()).state.status === "idle") {
+    const context = yield* github.fetchIssueContext(options.repo, options.issue);
+    yield* host.deliver(Events.IssueLabeled.make(context), `local-issue:${options.issue}`);
+  }
+  return host;
+});

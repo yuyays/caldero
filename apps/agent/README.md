@@ -139,6 +139,43 @@ The App must be installed on that repository with Contents, Pull requests and Is
 journal file to re-check the same publication after a restart; use a new filename for a separate check. The SDK
 also accepts `apiUrl` for GitHub Enterprise or a local contract peer; no credentials are copied into the workspace.
 
+## Run locally with your installed Pi profile
+
+The local entrypoint uses Pi's official `ModelRuntime` and `SettingsManager` SDK. It reuses your saved provider,
+model, reasoning level and login from Pi's agent directory (`~/.pi/agent` or `PI_CODING_AGENT_DIR`). OAuth refresh
+and credential locking are handled by Pi. You do not need another API key when the provider supports that login.
+The SDK version is pinned alongside Puchero's Pi Durable version.
+
+```sh
+pnpm --filter @puchero/agent local --check-connection
+pnpm --filter @puchero/agent local --issue 123 --check 'pnpm install --frozen-lockfile && pnpm test'
+```
+
+Replace `123` and the checks with the issue and validation commands you intend to run. It reads the host-only
+GitHub App configuration at `~/.config/puchero/github-app.json`:
+
+```json
+{
+  "appId": "YOUR_APP_ID",
+  "installationId": 123456,
+  "repo": { "owner": "YOUR_OWNER", "name": "YOUR_REPO" },
+  "privateKeyFile": "/absolute/path/to/app-private-key.pem"
+}
+```
+
+Use `--github-config`, `--pi-dir` or `--state-dir` to select other paths. Each issue has a locked SQLite session and
+disk-backed checkpoints/candidates under `~/.local/state/puchero/OWNER/REPO/ISSUE`. Repeat the same command to resume
+it; a published session retains its PR instead of starting another. The first Ctrl-C requests Stop and drains tools;
+once publishing starts it waits for the result. A second Ctrl-C exits immediately. Abruptly killed process locks may
+take up to proper-lockfile's stale-lock interval to expire before reopening.
+
+This is a trusted-local runner: tools execute with your user's filesystem permissions. Its minimal subprocess
+environment excludes inherited credentials and uses a separate HOME, but it is not a filesystem sandbox. Pi login
+files and GitHub keys are not placed in workspace snapshots or model prompts by the runner. Puchero keeps its own
+durable tools and issue/AGENTS.md context rather than loading interactive Pi extensions or skills. The Cloudflare
+Worker path is unchanged and does not read local Pi files. No webhook, Access setup or cloud deployment is needed
+for this explicit local issue run. See [local Pi design](../../docs/design/local-pi.md).
+
 ## Automatic publication
 
 Every new session opens its PR automatically after the configured `PUCHERO_CHECKS` pass in the sandbox. There is

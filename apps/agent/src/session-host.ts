@@ -1,5 +1,6 @@
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai/models";
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
   type ConversationId,
   createRegistry,
@@ -116,6 +117,7 @@ export interface SessionHostOptions {
   readonly session: Parameters<typeof initialSession>[0];
   readonly models: Models;
   readonly model: ModelRef;
+  readonly thinkingLevel?: ModelThinkingLevel;
   /** Set by a host that wakes itself (a Durable Object alarm); Pi then arms no timers. */
   readonly onWake?: (wake: Wake) => void;
   readonly onReport?: (report: Report) => void;
@@ -578,7 +580,11 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
   }
   const conversation = yield* pi((callContext) =>
     harness.root(callContext, {
-      agent: { model: options.model, extensions: [CodingTools, Puchero] },
+      agent: {
+        model: options.model,
+        ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
+        extensions: [CodingTools, Puchero],
+      },
     }),
   );
   rootId = conversation.id;
