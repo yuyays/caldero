@@ -4,10 +4,8 @@ Puchero runs a durable coding agent from a labeled GitHub issue, checks its chan
 and opens a pull request automatically when the checks pass. Review and merging
 happen on GitHub.
 
-Start with the [current architecture](docs/architecture.md): a shared Effect/Pi
-Durable session core with local and Cloudflare execution adapters. The local
-runner/watch path works with an installed Pi profile and GitHub App. The Cloudflare
-Worker, container and React inbox path is implemented but deployment remains unverified.
+Start with the [current architecture](docs/architecture.md) for the shared session
+core, local and Cloudflare execution diagrams, and implementation/deployment status.
 See `engines` in `package.json` for required versions. [MIT License](LICENSE).
 
 ## Run the agent

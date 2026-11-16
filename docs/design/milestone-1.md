@@ -1,7 +1,7 @@
+# Historical milestone 1: issue → patch → approval → PR
+
 Historical plan and as-built notes. Original planning snapshot: 2026-11-14,
 Draft 2, reviewed by Codex (`gpt-6.1-sol`).
-
-# Historical milestone 1: issue → patch → approval → PR
 
 Start with the [current architecture overview](../architecture.md). The planning
 rules and implementation-status snapshots below preserve the design's history;

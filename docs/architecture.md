@@ -19,11 +19,19 @@ and Puchero never merges automatically.
 | Slack, cron and general-purpose tool/result sessions                          | Future work                                                                                      |
 | Global/per-team SchedulerDO, multi-user scheduling and parallel local workers | Future work                                                                                      |
 | Automatic retry of terminal sessions and post-PR CI/review repair             | Future work                                                                                      |
-| P-Stack or other agent-skill loading                                          | Not integrated into the durable harness                                                          |
 
 The local and Cloudflare paths reuse the same session core. They are execution
 adapters, not separate agent implementations. The diagrams below distinguish
 application control flow from the storage each path owns.
+
+### Validation evidence
+
+On 2026-11-16 the local runner published
+[payment-change-control PR #22](https://github.com/yuyays/payment-change-control/pull/22),
+and the local watcher published
+[PR #23](https://github.com/yuyays/payment-change-control/pull/23), using the installed
+Pi profile and real GitHub App. These runs verify the local path; they do not
+establish deployed Cloudflare behavior.
 
 ## Shared session core
 
@@ -57,8 +65,9 @@ flowchart LR
 
 The current lifecycle is `idle → running → validating → publishing → published`,
 with bounded failure paths and cancellation before publication. Failed and
-cancelled sessions have no public restart action. Legacy approval fields remain
-readable for stored-state compatibility; they do not select a current mode.
+cancelled sessions have no public restart action. Legacy approval fields and
+`awaitingApproval`/`rejected` states remain readable for stored-state compatibility;
+they do not select a current mode.
 See [automatic publication](design/automatic-pr.md) and
 [session fault handling](design/session-faults.md).
 
@@ -88,8 +97,9 @@ interactive Pi skills, extensions and prompts are not imported.
 opening them and saves settlement receipts to avoid repeated terminal work.
 [`local-runner.ts`](../apps/agent/src/local-runner.ts) owns each issue's SQLite,
 workspace and kernel lock. Default state is under
-`~/.local/state/puchero/OWNER/REPO/ISSUE`; watch receipts sit in the repository
-directory. Returning to the same directory resumes its saved session.
+`~/.local/state/puchero/OWNER/REPO/ISSUE`; watch receipts sit in the repository state
+directory, `~/.local/state/puchero/OWNER/REPO`. Returning to the same issue state
+directory resumes its saved session.
 
 The watcher is serial and checks eligibility at scan time. Restarting the command
 resumes pending work; there is no installed supervisor or automatic process
