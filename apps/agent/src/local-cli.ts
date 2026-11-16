@@ -5,8 +5,8 @@ import { parseArgs } from "node:util";
 import { Events, Repo } from "@puchero/domain";
 import { Effect, Schema } from "effect";
 import { GitHubApp } from "./github-app.ts";
-import { openLocalPi, LocalPiError } from "./local-pi.ts";
-import { openLocalIssue } from "./local-runner.ts";
+import { openLocalPi } from "./local-pi.ts";
+import { openLocalIssue, LocalRunnerError, validateLocalIssue } from "./local-runner.ts";
 import { GitHub } from "./ports.ts";
 
 const decodeGitHub = Schema.decodeUnknownEffect(
@@ -58,20 +58,11 @@ const command = Effect.gen(function* () {
           help: { type: "boolean" },
         },
       }),
-    catch: () => new LocalPiError({ message: "Invalid local runner arguments; use --help" }),
+    catch: () => new LocalRunnerError({ message: "Invalid local runner arguments; use --help" }),
   });
   if (values.help) return yield* Effect.sync(() => console.log(help));
   const issue = Number(values.issue);
-  if (
-    !values["check-connection"] &&
-    (!Number.isSafeInteger(issue) ||
-      issue < 1 ||
-      !values.check?.length ||
-      values.check.some((check) => !check.trim()))
-  )
-    return yield* new LocalPiError({
-      message: "Provide --issue NUMBER and at least one nonempty --check COMMAND",
-    });
+  if (!values["check-connection"]) yield* validateLocalIssue(issue, values.check ?? []);
   const pi = yield* openLocalPi({
     cwd: process.cwd(),
     ...(values["pi-dir"] ? { agentDir: resolve(values["pi-dir"]) } : {}),
@@ -83,18 +74,17 @@ const command = Effect.gen(function* () {
   const configPath = resolve(
     values["github-config"] ?? join(homedir(), ".config/puchero/github-app.json"),
   );
-  const config = yield* Effect.tryPromise({
+  const configText = yield* Effect.tryPromise({
     try: () => readFile(configPath, "utf8"),
-    catch: () => new LocalPiError({ message: "Could not read the GitHub App configuration file" }),
-  }).pipe(
-    Effect.flatMap(decodeGitHub),
-    Effect.mapError(
-      () => new LocalPiError({ message: "Invalid or unreadable GitHub App configuration" }),
-    ),
+    catch: () =>
+      new LocalRunnerError({ message: "Could not read the GitHub App configuration file" }),
+  });
+  const config = yield* decodeGitHub(configText).pipe(
+    Effect.mapError(() => new LocalRunnerError({ message: "Invalid GitHub App configuration" })),
   );
   const privateKey = yield* Effect.tryPromise({
     try: () => readFile(config.privateKeyFile, "utf8"),
-    catch: () => new LocalPiError({ message: "Could not read the GitHub App private key" }),
+    catch: () => new LocalRunnerError({ message: "Could not read the GitHub App private key" }),
   });
   const github = yield* GitHubApp.make({
     ...config,
@@ -136,6 +126,7 @@ const command = Effect.gen(function* () {
         return yield* Effect.never;
       }),
     ),
+    Effect.catch((error) => Effect.logError(`Stop request failed: ${error.message}`)),
     Effect.forkScoped,
   );
   yield* host.drain();
@@ -151,7 +142,7 @@ const command = Effect.gen(function* () {
     ),
   );
   if (state.status === "failed")
-    return yield* new LocalPiError({
+    return yield* new LocalRunnerError({
       message: "The local session failed; its durable state has been retained",
     });
   return yield* Effect.void;

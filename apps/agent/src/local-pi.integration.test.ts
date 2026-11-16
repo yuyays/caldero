@@ -52,4 +52,10 @@ describe("Installed Pi profile", () => {
       });
     }),
   );
+  it.effect("matches Pi's medium reasoning default when the profile does not set one", () =>
+    Effect.gen(function* () {
+      const root = yield* profile({ defaultProvider: "openai", defaultModel: "gpt-6.1-sol" });
+      expect((yield* openLocalPi({ cwd: root, agentDir: root })).thinkingLevel).toBe("medium");
+    }),
+  );
 });

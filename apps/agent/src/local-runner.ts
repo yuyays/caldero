@@ -5,12 +5,29 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { Events, type Repo } from "@puchero/domain";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { makeDiskWorkspaceStore } from "./disk-workspace-store.ts";
-import { LocalPiError } from "./local-pi.ts";
 import { LocalWorkspace } from "./local-workspace.ts";
 import { GitHub, Projection } from "./ports.ts";
 import { openSessionHost, type SessionHostOptions } from "./session-host.ts";
+
+export class LocalRunnerError extends Schema.TaggedError<LocalRunnerError>()("LocalRunnerError", {
+  message: Schema.String,
+}) {}
+
+export const validateLocalIssue = Effect.fn("validateLocalIssue")(
+  (issue: number, checks: ReadonlyArray<string>): Effect.Effect<void, LocalRunnerError> =>
+    !Number.isSafeInteger(issue) ||
+    issue < 1 ||
+    checks.length === 0 ||
+    checks.some((check) => !check.trim())
+      ? Effect.fail(
+          new LocalRunnerError({
+            message: "Provide --issue NUMBER and at least one nonempty --check COMMAND",
+          }),
+        )
+      : Effect.void,
+);
 
 /** Local commands get a small environment, but still run with this user's filesystem permissions. */
 class LocalExecutionEnv extends NodeExecutionEnv {
@@ -37,7 +54,7 @@ class LocalExecutionEnv extends NodeExecutionEnv {
   }
 }
 
-/** Reopening the same state directory resumes the same durable issue; no cloud deployment is involved. */
+/** The caller's scope owns this host, SQLite and lock; reopening resumes nonterminal work in the same issue. */
 export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   readonly repo: Repo;
   readonly issue: number;
@@ -45,15 +62,7 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   readonly checks: ReadonlyArray<string>;
   readonly pi: Pick<SessionHostOptions, "models" | "model" | "thinkingLevel">;
 }) {
-  if (
-    !Number.isSafeInteger(options.issue) ||
-    options.issue < 1 ||
-    options.checks.length === 0 ||
-    options.checks.some((check) => !check.trim())
-  )
-    return yield* new LocalPiError({
-      message: "A positive issue number and explicit validation checks are required",
-    });
+  yield* validateLocalIssue(options.issue, options.checks);
   const root = join(options.stateDir, "workspace");
   const home = join(options.stateDir, "shell-home");
   yield* Effect.tryPromise({
@@ -62,14 +71,14 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
         mkdir(home, { recursive: true, mode: 0o700 }),
         mkdir(root, { recursive: true, mode: 0o700 }),
       ]),
-    catch: () => new LocalPiError({ message: "Could not create the local session directory" }),
+    catch: () => new LocalRunnerError({ message: "Could not create the local session directory" }),
   });
   yield* Effect.acquireRelease(
     Effect.tryPromise({
       try: () => lockfile.lock(options.stateDir, { retries: 0 }),
-      catch: () =>
-        new LocalPiError({
-          message: "This local session is already running or its state directory cannot be locked",
+      catch: (error) =>
+        new LocalRunnerError({
+          message: `Could not lock the local session (${typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : "unknown"}); another runner may own it`,
         }),
     }),
     (release) => Effect.promise(() => release()),
@@ -77,7 +86,7 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   const storage = yield* Effect.acquireRelease(
     Effect.tryPromise({
       try: () => openNodeSqliteStorage(join(options.stateDir, "session.sqlite")),
-      catch: () => new LocalPiError({ message: "Could not open local session storage" }),
+      catch: () => new LocalRunnerError({ message: "Could not open local session storage" }),
     }),
     (value) => Effect.promise(() => value.close(BACKGROUND_CONTEXT)),
   );

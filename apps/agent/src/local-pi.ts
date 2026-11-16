@@ -26,9 +26,13 @@ export const openLocalPi = Effect.fn("openLocalPi")(function* (options: {
     Effect.tryPromise({
       try: (signal) =>
         ModelRuntime.create({
-          authPath: join(agentDir, "auth.json"),
-          modelsPath: join(agentDir, "models.json"),
-          modelsStorePath: join(agentDir, "models-store.json"),
+          ...(options.agentDir === undefined
+            ? {}
+            : {
+                authPath: join(agentDir, "auth.json"),
+                modelsPath: join(agentDir, "models.json"),
+                modelsStorePath: join(agentDir, "models-store.json"),
+              }),
           allowModelNetwork: false,
           signal,
         }),
@@ -55,6 +59,7 @@ export const openLocalPi = Effect.fn("openLocalPi")(function* (options: {
   return {
     models,
     model: { provider, modelId },
-    thinkingLevel: settings.getDefaultThinkingLevel() ?? "off",
+    // Pi 1.5.2 uses medium when unset; that default is not a public SDK export.
+    thinkingLevel: settings.getDefaultThinkingLevel() ?? "medium",
   };
 });

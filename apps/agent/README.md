@@ -165,7 +165,10 @@ GitHub App configuration at `~/.config/puchero/github-app.json`:
 
 Use `--github-config`, `--pi-dir` or `--state-dir` to select other paths. Each issue has a locked SQLite session and
 disk-backed checkpoints/candidates under `~/.local/state/puchero/OWNER/REPO/ISSUE`. Repeat the same command to resume
-it; a published session retains its PR instead of starting another. The first Ctrl-C requests Stop and drains tools;
+nonterminal work; a published session retains its PR instead of starting another. Failed and cancelled sessions are
+terminal: rerunning reports their saved outcome and does not restart them. Start a genuinely new task with a new
+GitHub issue, which gets its own state directory. Keep old directories for their publication receipts; changing
+`--state-dir` selects storage, it does not restart an existing session. The first Ctrl-C requests Stop and drains tools;
 once publishing starts it waits for the result. A second Ctrl-C exits immediately. Abruptly killed process locks may
 take up to proper-lockfile's stale-lock interval to expire before reopening.
 

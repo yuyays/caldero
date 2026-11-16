@@ -132,4 +132,27 @@ describe("Local durable runner", () => {
       expect(github.state.pullRequests).toHaveLength(0);
     }),
   );
+  it.effect("refuses a second runner while the same session directory is owned", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* directory;
+      const github = makeFakeGitHub({ source: [] });
+      const options = {
+        repo,
+        issue: 7,
+        stateDir,
+        checks: ["test -f notes.txt"],
+        pi: scriptedModels(),
+      };
+      const first = yield* openLocalIssue(options).pipe(Effect.provide(github.layer));
+      expect(
+        yield* openLocalIssue(options).pipe(Effect.provide(github.layer), Effect.flip),
+      ).toMatchObject({
+        _tag: "LocalRunnerError",
+        message: expect.stringContaining("ELOCKED"),
+      });
+      yield* first.drain();
+      expect((yield* first.view()).state.status).toBe("published");
+      expect(github.state.pullRequests).toHaveLength(1);
+    }),
+  );
 });
