@@ -13,27 +13,46 @@ import { openSessionHost, type SessionHostOptions } from "./session-host.ts";
 
 export class LocalRunnerError extends Schema.TaggedError<LocalRunnerError>()("LocalRunnerError", {
   message: Schema.String,
-  reason: Schema.optionalKey(Schema.Literals(["locked", "unavailable"])),
+  reason: Schema.optionalKey(Schema.Literals(["locked", "configuration"])),
 }) {}
 
-export const validateLocalIssue = Effect.fn("validateLocalIssue")(
-  (issue: number, checks: ReadonlyArray<string>): Effect.Effect<void, LocalRunnerError> =>
-    !Number.isSafeInteger(issue) ||
-    issue < 1 ||
-    checks.length === 0 ||
-    checks.some((check) => !check.trim())
+export const validateLocalChecks = Effect.fn("validateLocalChecks")(
+  (checks: ReadonlyArray<string>): Effect.Effect<void, LocalRunnerError> =>
+    checks.length === 0 || checks.some((check) => !check.trim())
       ? Effect.fail(
           new LocalRunnerError({
-            message: "Provide --issue NUMBER and at least one nonempty --check COMMAND",
+            message: "Provide at least one nonempty --check COMMAND",
           }),
         )
       : Effect.void,
 );
 
+export const validateLocalIssue = Effect.fn("validateLocalIssue")(function* (
+  issue: number,
+  checks: ReadonlyArray<string>,
+) {
+  if (!Number.isSafeInteger(issue) || issue < 1)
+    return yield* new LocalRunnerError({ message: "Provide a positive --issue NUMBER" });
+  yield* validateLocalChecks(checks);
+});
+
 const lockError = (code: string) =>
   new LocalRunnerError({
     message: `Could not lock the local session (${code}); another runner may own it`,
-    reason: code === "ELOCKED" ? "locked" : "unavailable",
+    reason: code === "ELOCKED" ? "locked" : "configuration",
+  });
+
+const localIoError = (message: string, error: unknown) =>
+  new LocalRunnerError({
+    message,
+    ...(typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    ["EACCES", "EPERM", "ENOTDIR", "EISDIR", "EROFS", "SQLITE_CANTOPEN"].includes(
+      String(error.code),
+    )
+      ? { reason: "configuration" as const }
+      : {}),
   });
 
 /** A kernel flock has no stale timeout: pausing a runner cannot hand its workspace to another process. */
@@ -129,13 +148,13 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
         mkdir(home, { recursive: true, mode: 0o700 }),
         mkdir(root, { recursive: true, mode: 0o700 }),
       ]),
-    catch: () => new LocalRunnerError({ message: "Could not create the local session directory" }),
+    catch: (error) => localIoError("Could not create the local session directory", error),
   });
   yield* holdLocalLock(options.stateDir);
   const storage = yield* Effect.acquireRelease(
     Effect.tryPromise({
       try: () => openNodeSqliteStorage(join(options.stateDir, "session.sqlite")),
-      catch: () => new LocalRunnerError({ message: "Could not open local session storage" }),
+      catch: (error) => localIoError("Could not open local session storage", error),
     }),
     (value) => Effect.promise(() => value.close(BACKGROUND_CONTEXT)),
   );

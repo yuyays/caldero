@@ -6,7 +6,12 @@ import { Events, Repo } from "@puchero/domain";
 import { Effect, Schema } from "effect";
 import { GitHubApp } from "./github-app.ts";
 import { openLocalPi } from "./local-pi.ts";
-import { openLocalIssue, LocalRunnerError, validateLocalIssue } from "./local-runner.ts";
+import {
+  openLocalIssue,
+  LocalRunnerError,
+  validateLocalChecks,
+  validateLocalIssue,
+} from "./local-runner.ts";
 import { GitHub } from "./ports.ts";
 import { localWatchIssueError, openLocalWatcher } from "./local-watch.ts";
 
@@ -73,6 +78,7 @@ const command = Effect.gen(function* () {
   });
   if (values.help) return yield* Effect.sync(() => console.log(help));
   const issue = Number(values.issue);
+  const label = values.label ?? "agent";
   if (
     values.watch &&
     (values.issue !== undefined || values["state-dir"] !== undefined || values["check-connection"])
@@ -90,15 +96,14 @@ const command = Effect.gen(function* () {
       message: "--label, --poll-seconds and --state-root require --watch",
     });
   const pollSeconds = Number(values["poll-seconds"] ?? 60);
-  if (
-    values.watch &&
-    (!Number.isFinite(pollSeconds) || pollSeconds < 1 || !(values.label ?? "agent").trim())
-  )
+  if (values.watch && (!Number.isFinite(pollSeconds) || pollSeconds < 1 || !label.trim()))
     return yield* new LocalRunnerError({
       message: "Use a nonempty --label and --poll-seconds of at least 1",
     });
   if (!values["check-connection"])
-    yield* validateLocalIssue(values.watch ? 1 : issue, values.check ?? []);
+    yield* values.watch
+      ? validateLocalChecks(values.check ?? [])
+      : validateLocalIssue(issue, values.check ?? []);
   const pi = yield* openLocalPi({
     cwd: process.cwd(),
     ...(values["pi-dir"] ? { agentDir: resolve(values["pi-dir"]) } : {}),
@@ -136,7 +141,7 @@ const command = Effect.gen(function* () {
       repo: config.repo,
       stateRoot,
       pollSeconds,
-      discover: github.listOpenLabeledIssues(values.label ?? "agent"),
+      discover: github.listOpenLabeledIssues(label),
       runIssue: Effect.fn("LocalWatch.runIssue")(function* (number: number, admit: boolean) {
         const host = yield* openLocalIssue({
           repo: config.repo,
@@ -168,7 +173,7 @@ const command = Effect.gen(function* () {
       Effect.forkScoped,
     );
     yield* Effect.logInfo(
-      `Watching ${config.repo.owner}/${config.repo.name}, label ${values.label ?? "agent"}, every ${pollSeconds}s; state ${stateRoot}`,
+      `Watching ${config.repo.owner}/${config.repo.name}, label ${label}, every ${pollSeconds}s; state ${stateRoot}`,
     );
     return yield* watcher.run;
   }

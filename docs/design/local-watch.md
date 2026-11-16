@@ -32,7 +32,8 @@ labels does not start another attempt. Legacy paused sessions are reported once
 and require explicit user input through the existing session workflow.
 
 Discovery and transient issue failures log and retry on the next cycle. Permanent
-session faults and a lock held by another issue runner are reported and suppressed;
+session faults, invalid filesystem/lock configuration and a lock held by another
+issue runner are reported and suppressed;
 repair/recovery of those issues is explicit through the single-issue runner. Receipt
 write failures stop the watcher before further admission. Watch receipts grow by
 one entry per issue; no retention/compaction policy is introduced in this version.

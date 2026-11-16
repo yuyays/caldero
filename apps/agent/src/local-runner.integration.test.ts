@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { watch } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/provid
 import { makeFakeGitHub } from "./fake-github.ts";
 import { openLocalIssue } from "./local-runner.ts";
 import { scriptedModels } from "./testing.ts";
+import { localWatchIssueError } from "./local-watch.ts";
 
 const repo = { owner: "acme", name: "app" };
 const directory = Effect.acquireRelease(
@@ -17,6 +18,23 @@ const directory = Effect.acquireRelease(
 );
 
 describe("Local durable runner", () => {
+  it.effect("reports an invalid session directory as a permanent watch configuration failure", () =>
+    Effect.gen(function* () {
+      const root = yield* directory;
+      const stateDir = join(root, "not-a-directory");
+      yield* Effect.promise(() => writeFile(stateDir, "occupied"));
+      const github = makeFakeGitHub({ source: [] });
+      const error = yield* openLocalIssue({
+        repo,
+        issue: 7,
+        stateDir,
+        checks: ["true"],
+        pi: scriptedModels(),
+      }).pipe(Effect.provide(github.layer), Effect.mapError(localWatchIssueError), Effect.flip);
+      expect(error.retryable).toBe(false);
+      expect(github.state.pullRequests).toHaveLength(0);
+    }),
+  );
   it.effect(
     "persists the checked patch and resumes the published issue without creating another PR",
     () =>

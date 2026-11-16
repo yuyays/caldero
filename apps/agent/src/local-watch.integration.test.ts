@@ -207,7 +207,6 @@ describe("Local issue watcher", () => {
       const fiber = yield* watcher.run.pipe(Effect.forkScoped);
       yield* Deferred.await(entered);
       yield* watcher.stop;
-      expect(runs).toEqual([7]);
       yield* Deferred.succeed(finish, undefined);
       yield* Fiber.join(fiber);
       expect(runs).toEqual([7]);

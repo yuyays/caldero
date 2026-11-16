@@ -576,7 +576,7 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
   });
   return {
     ...github,
-    /** The REST issues collection also contains PRs; only admit actual open issues. */
+    /** Host-only discovery stays outside the session's GitHub port. REST also lists PRs here. */
     listOpenLabeledIssues: Effect.fn("GitHubApp.listOpenLabeledIssues")(
       function* (label: string) {
         const api = yield* client(options.repo);

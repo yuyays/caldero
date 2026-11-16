@@ -26,7 +26,7 @@ export const localWatchIssueError = (
     message: error.message,
     retryable:
       !(error instanceof SessionFault) &&
-      !(error instanceof LocalRunnerError && error.reason === "locked"),
+      !(error instanceof LocalRunnerError && error.reason !== undefined),
   });
 
 const issueNumber = Schema.Int.check(Schema.isGreaterThan(0));
@@ -103,13 +103,13 @@ export const openLocalWatcher = Effect.fn("openLocalWatcher")(function* (options
           });
           yield* Effect.tryPromise({ try: () => file.sync(), catch: ioError });
         }),
-      (file) => Effect.promise(() => file.close()),
+      (file) => Effect.tryPromise({ try: () => file.close(), catch: ioError }),
     );
     yield* Effect.tryPromise({ try: () => rename(temporary, path), catch: ioError });
     yield* Effect.acquireUseRelease(
       Effect.tryPromise({ try: () => open(options.stateRoot, "r"), catch: ioError }),
       (directory) => Effect.tryPromise({ try: () => directory.sync(), catch: ioError }),
-      (directory) => Effect.promise(() => directory.close()),
+      (directory) => Effect.tryPromise({ try: () => directory.close(), catch: ioError }),
     );
     state = next;
   });
