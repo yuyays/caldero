@@ -60,6 +60,9 @@ export const openLocalPi = Effect.fn("openLocalPi")(function* (options: {
     models,
     model: { provider, modelId },
     // Pi 1.5.2 uses medium when unset; that default is not a public SDK export.
-    thinkingLevel: settings.getDefaultThinkingLevel() ?? "medium",
+    thinkingLevel:
+      settings.getModelThinkingLevel(provider, modelId) ??
+      settings.getDefaultThinkingLevel() ??
+      "medium",
   };
 });

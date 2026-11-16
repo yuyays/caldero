@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
-import lockfile from "proper-lockfile";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
@@ -28,6 +28,57 @@ export const validateLocalIssue = Effect.fn("validateLocalIssue")(
         )
       : Effect.void,
 );
+
+const lockError = (code: string) =>
+  new LocalRunnerError({
+    message: `Could not lock the local session (${code}); another runner may own it`,
+  });
+
+/** A kernel flock has no stale timeout: pausing a runner cannot hand its workspace to another process. */
+const holdSessionLock = Effect.fn("holdSessionLock")(function* (stateDir: string) {
+  const child = yield* Effect.acquireRelease(
+    Effect.try({
+      try: () =>
+        spawn(
+          "flock",
+          [
+            "--exclusive",
+            "--nonblock",
+            "--conflict-exit-code",
+            "73",
+            "--no-fork",
+            join(stateDir, ".runner.lock"),
+            process.execPath,
+            "-e",
+            "process.stdout.write('locked\\n'); process.stdin.resume()",
+          ],
+          { stdio: ["pipe", "pipe", "ignore"], env: { PATH: "/usr/bin:/bin" } },
+        ),
+      catch: () => lockError("spawn"),
+    }),
+    (value) =>
+      Effect.promise(
+        () =>
+          new Promise<void>((resolve) => {
+            if (value.exitCode !== null || value.signalCode !== null) return resolve();
+            value.once("close", () => resolve());
+            value.kill("SIGKILL");
+          }),
+      ),
+  );
+  yield* Effect.tryPromise({
+    try: () =>
+      new Promise<void>((resolve, reject) => {
+        child.once("error", () => reject(lockError("flock unavailable")));
+        child.once("close", (code) => reject(lockError(code === 73 ? "ELOCKED" : String(code))));
+        child.stdout.once("data", (data) => {
+          if (data.toString() === "locked\n") resolve();
+          else reject(lockError("invalid handshake"));
+        });
+      }),
+    catch: (error) => (error instanceof LocalRunnerError ? error : lockError("unknown")),
+  });
+});
 
 /** Local commands get a small environment, but still run with this user's filesystem permissions. */
 class LocalExecutionEnv extends NodeExecutionEnv {
@@ -73,16 +124,7 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
       ]),
     catch: () => new LocalRunnerError({ message: "Could not create the local session directory" }),
   });
-  yield* Effect.acquireRelease(
-    Effect.tryPromise({
-      try: () => lockfile.lock(options.stateDir, { retries: 0 }),
-      catch: (error) =>
-        new LocalRunnerError({
-          message: `Could not lock the local session (${typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : "unknown"}); another runner may own it`,
-        }),
-    }),
-    (release) => Effect.promise(() => release()),
-  );
+  yield* holdSessionLock(options.stateDir);
   const storage = yield* Effect.acquireRelease(
     Effect.tryPromise({
       try: () => openNodeSqliteStorage(join(options.stateDir, "session.sqlite")),

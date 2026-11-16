@@ -2,7 +2,7 @@
 
 Puchero's local runner uses Pi's official `pi-coding-agent` SDK `ModelRuntime` and `SettingsManager`.
 They load the existing agent directory (including `PI_CODING_AGENT_DIR`), provider configuration, saved login,
-default model and thinking level. The SDK owns OAuth refresh, file locking and persistence; Puchero does not parse,
+default model and its per-model or global thinking level. The SDK owns OAuth refresh, file locking and persistence; Puchero does not parse,
 export, copy or reimplement tokens. Supported SDK providers can be selected in Pi as usual. No separate API key is required
 when the selected provider supports the saved subscription login.
 
@@ -12,7 +12,7 @@ A missing default or failed login exits with a sanitized error before admitting 
 Workspace Pi settings are not trusted. Only model/provider/auth settings are reused; interactive Pi extensions, tools,
 skills and prompts are not imported. Puchero retains its durable tools and issue/AGENTS.md task context.
 
-Each issue uses an exclusively locked state directory with Pi SQLite state and an immutable disk workspace store.
+The Linux runner uses util-linux `flock` to hold an OS lock on each state directory with Pi SQLite state and an immutable disk workspace store.
 Reopening resumes committed tasks and publication receipts. Credentials are loaded on the host and never copied into
 workspace snapshots or model prompts. Tool subprocesses get a small environment and a separate HOME, but local tools
 still have the current user's filesystem permissions. This runner is for trusted local repositories; it is not the
@@ -20,7 +20,9 @@ isolated Cloudflare container adapter. No deployment or webhook is needed to run
 
 The first Ctrl-C requests Stop and drains work. Stop is refused once publishing starts, since a PR may already exist;
 the runner waits for that outcome. A second Ctrl-C exits immediately; reopening the same directory recovers durable state.
-Abruptly killed runner locks expire according to proper-lockfile's stale-lock policy.
+The kernel lock has no stale timeout: suspending the runner cannot allow another process to take over. The small
+lock holder releases ownership on normal shutdown or when its parent dies (stdin closes). SDK credential locking
+remains Pi-owned.
 
 Acceptance:
 

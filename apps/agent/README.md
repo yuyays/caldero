@@ -141,7 +141,7 @@ also accepts `apiUrl` for GitHub Enterprise or a local contract peer; no credent
 
 ## Run locally with your installed Pi profile
 
-The local entrypoint uses Pi's official `ModelRuntime` and `SettingsManager` SDK. It reuses your saved provider,
+On Linux (with `flock` from util-linux installed), the local entrypoint uses Pi's official `ModelRuntime` and `SettingsManager` SDK. It reuses your saved provider,
 model, reasoning level and login from Pi's agent directory (`~/.pi/agent` or `PI_CODING_AGENT_DIR`). OAuth refresh
 and credential locking are handled by Pi. You do not need another API key when the provider supports that login.
 The SDK version is pinned alongside Puchero's Pi Durable version.
@@ -169,8 +169,8 @@ nonterminal work; a published session retains its PR instead of starting another
 terminal: rerunning reports their saved outcome and does not restart them. Start a genuinely new task with a new
 GitHub issue, which gets its own state directory. Keep old directories for their publication receipts; changing
 `--state-dir` selects storage, it does not restart an existing session. The first Ctrl-C requests Stop and drains tools;
-once publishing starts it waits for the result. A second Ctrl-C exits immediately. Abruptly killed process locks may
-take up to proper-lockfile's stale-lock interval to expire before reopening.
+once publishing starts it waits for the result. A second Ctrl-C exits immediately. The OS file lock has no stale timeout: a paused runner keeps ownership, and
+exiting releases it without a stale-lock wait.
 
 This is a trusted-local runner: tools execute with your user's filesystem permissions. Its minimal subprocess
 environment excludes inherited credentials and uses a separate HOME, but it is not a filesystem sandbox. Pi login
