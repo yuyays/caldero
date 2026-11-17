@@ -113,8 +113,8 @@ Publishing requires a `PublishJournal`. SessionHost supplies a Pi document with 
 The adapter freezes commit metadata before calling GitHub and stores each stage's receipt before advancing. It never
 force-updates a branch. An ambiguous result is reconciled against the expected commit and open **or closed** PRs;
 an expected branch with no PR finishes only the PR stage. A moved base branch ends the session as `failed`; there is
-no restart transition for failed sessions in milestone 1. Start a fresh session from updated context; its new
-candidate must pass validation before publication. The adapter checks the base before creating a branch and again before opening a missing PR. A base
+no automatic rebase. Explicit retry reconciles the same frozen candidate; it does not bypass a moved-base conflict.
+A genuinely new task needs updated context and validation. The adapter checks the base before creating a branch and again before opening a missing PR. A base
 that moves between those checks may still leave an unused branch; the adapter never deletes or overwrites it.
 
 ### Live scratch contract check (opt-in)
@@ -169,7 +169,7 @@ GitHub App configuration at `~/.config/puchero/github-app.json`:
 Use `--github-config`, `--pi-dir` or `--state-dir` to select other paths. Each issue has a locked SQLite session and
 disk-backed checkpoints/candidates under `~/.local/state/puchero/OWNER/REPO/ISSUE`. Repeat the same command to resume
 nonterminal work; a published session retains its PR instead of starting another. Failed and cancelled sessions are
-terminal: rerunning reports their saved outcome and does not restart them. Start a genuinely new task with a new
+terminal: rerunning reports their saved outcome and does not restart them. Use explicit retry below for failed sessions. Start a genuinely new task with a new
 GitHub issue, which gets its own state directory. Keep old directories for their publication receipts; changing
 `--state-dir` selects storage, it does not restart an existing session. The first Ctrl-C requests Stop and drains tools;
 once publishing starts it waits for the result. A second Ctrl-C exits immediately. The OS file lock has no stale timeout: a paused runner keeps ownership, and
@@ -181,6 +181,31 @@ files and GitHub keys are not placed in workspace snapshots or model prompts by 
 durable tools and issue/AGENTS.md context rather than loading interactive Pi extensions or skills. The Cloudflare
 Worker path is unchanged and does not read local Pi files. No webhook, Access setup or cloud deployment is needed
 for this explicit local issue run. See [local Pi design](../../docs/design/local-pi.md).
+
+### Retry a failed local issue
+
+```sh
+pnpm retry --issue 11 \
+  --check 'pnpm install --frozen-lockfile' --check 'pnpm test'
+```
+
+Use the configured repository's real checks. Retry is an explicit action: supply the
+same GitHub configuration, Pi profile and issue state directory as the original
+run (`--state-dir <state-root>/11` for a custom watch root). It refuses missing,
+uninitialized, unreadable, running, published and cancelled sessions.
+
+Editing/check failures start a new run with the previous failure in its prompt,
+using the saved conversation, workspace and original base. Publication failures
+reconcile the same frozen candidate and publication receipts first: an existing
+PR is recovered rather than replaced. A failed follow-up run keeps its earlier
+PR and uses the next candidate version. Retry does not rebase, remove branch
+conflicts or repair credentials; fix the external cause before retrying.
+
+The normal attempt limit still applies. Repeating `pnpm local` only resumes
+nonterminal work; it does not request another retry. After an interrupted retry,
+resume with the original `local --issue N` command and the same state directory.
+The watcher still leaves settled terminal sessions alone. Use `pnpm status
+--issue 11` to inspect the result. See [retry design](../../docs/design/local-retry.md).
 
 ### Watch labeled issues locally
 

@@ -32,7 +32,9 @@ Settled receipts suppress repeated opening of terminal sessions. If the process
 dies after publication but before recording settlement, reopening the issue's
 SQLite recovers its existing PR. Failed/cancelled sessions stay terminal; changing
 labels does not start another attempt. Legacy paused sessions are reported once;
-the watcher offers no automatic restart of paused or terminal sessions.
+the watcher offers no automatic restart of paused or terminal sessions. Failed
+sessions can be retried explicitly with [the local retry command](local-retry.md),
+using the same issue directory; no settlement receipt needs removal.
 
 Discovery and transient issue failures log and retry on the next cycle. Permanent
 session faults and invalid filesystem/lock configuration are reported and suppressed;

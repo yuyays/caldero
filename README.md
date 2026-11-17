@@ -72,3 +72,6 @@ Start the API with `pnpm start:api` from the project root, with `DATABASE_URL` a
 `PORT` set. It runs `dist/main.js` on Node.js with `apps/api` as the working directory.
 Deploy `apps/api/dist` with the API's production `dependencies`; workspace packages are
 already in the bundle.
+
+Explicitly retry failed local issues with `pnpm retry --issue N --check COMMAND`; see
+[retry operations](apps/agent/README.md#retry-a-failed-local-issue).

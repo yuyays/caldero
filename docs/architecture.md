@@ -19,7 +19,7 @@ and Puchero never merges automatically.
 | React inbox for local SQLite sessions                                         | Not connected; the inbox reads the Worker/SessionDO path                                          |
 | Slack, cron and general-purpose tool/result sessions                          | Future work                                                                                       |
 | Global/per-team SchedulerDO, multi-user scheduling and parallel local workers | Future work                                                                                       |
-| Automatic retry of terminal sessions and post-PR CI/review repair             | Future work                                                                                       |
+| Automatic terminal retry and post-PR CI/review repair                         | Future work                                                                                       |
 
 The local and Cloudflare paths reuse the same session core. They are execution
 adapters, not separate agent implementations. The diagrams below distinguish
@@ -103,7 +103,9 @@ opening them and saves settlement receipts to avoid repeated terminal work.
 workspace and kernel lock. Default state is under
 `~/.local/state/puchero/OWNER/REPO/ISSUE`; watch receipts sit in the repository state
 directory, `~/.local/state/puchero/OWNER/REPO`. Returning to the same issue state
-directory resumes its saved session.
+directory resumes its saved session. `pnpm retry --issue N --check COMMAND` explicitly
+retries a failed session through the same durable core: failed edits/checks start a
+new run; failed publication reconciles its existing candidate. See [retry](design/local-retry.md).
 
 The watcher is serial and checks eligibility at scan time. Restarting the command
 resumes pending work; there is no installed supervisor or automatic process
@@ -171,7 +173,7 @@ product proposals, not diagrams or modules currently in this repository. Slack,
 cron and Notion support, and team-aware scheduling, remain future work. The
 Worker/SessionDO/Container shape is the implemented cloud path documented above.
 
-Fine-grained tool/check progress, watcher supervision, explicit terminal retries,
+Fine-grained tool/check progress, watcher supervision, automatic terminal retries,
 CI/review follow-ups, stronger local isolation and per-task resource limits remain
 separate work. Agent skills are workflow instructions, not runtime guarantees.
 The current harness passes issue and repository `AGENTS.md` context; it does not

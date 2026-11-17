@@ -69,6 +69,7 @@ export type SessionState = typeof SessionState.Type;
 export const SessionEvent = Schema.TaggedUnion({
   IssueLabeled: { context: Schema.String, baseSha: Schema.String, baseRef: Schema.String },
   UserInput: { text: Schema.String },
+  Retry: { expectedRevision: Schema.Int },
   RunAnswered: { runId: Schema.Int },
   Validated: { runId: Schema.Int, patchDigest: Schema.String, evidence: Schema.String },
   ValidationFailed: { runId: Schema.Int, evidence: Schema.String },
@@ -200,6 +201,24 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
       if (state.status !== "idle") return unchanged("duplicate");
       return applied({ status: "running", runId: 1, baseSha, baseRef }, [
         submit(1, "start", context),
+      ]);
+    },
+    Retry: ({ expectedRevision }) => {
+      if (state.status !== "failed" || state.revision !== expectedRevision)
+        return unchanged("stale");
+      // A frozen candidate means publication may have landed: keep its identity and reconcile first.
+      const binding = state.candidate?.binding;
+      if (binding !== undefined)
+        return applied({ status: "publishing", attempts: 0, failure: null }, [
+          (instructionId) => Instruction.cases.Reconcile.make({ instructionId, binding }),
+        ]);
+      const runId = state.runId + 1;
+      return applied({ status: "running", runId, attempts: 0, failure: null }, [
+        submit(
+          runId,
+          "start",
+          `Retry the failed task using the existing conversation and workspace. Fix the cause and finish again.\n\nPrevious failure:\n${state.failure ?? "No failure details were saved."}`,
+        ),
       ]);
     },
     UserInput: ({ text }) => {

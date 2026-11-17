@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -7,6 +7,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { Events, type Repo } from "@puchero/domain";
 import { Effect, Layer, Schema } from "effect";
 import { makeDiskWorkspaceStore } from "./disk-workspace-store.ts";
+import { readLocalSession } from "./local-status.ts";
 import { LocalWorkspace } from "./local-workspace.ts";
 import { GitHub, Projection } from "./ports.ts";
 import { openSessionHost, type SessionHostOptions } from "./session-host.ts";
@@ -150,11 +151,13 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   readonly pi: Pick<SessionHostOptions, "models" | "model" | "thinkingLevel">;
   /** Watch discovery can reopen saved work without admitting an idle, now-ineligible issue. */
   readonly admit?: boolean;
+  /** Explicitly retry only an existing failed session; never admit new work. */
+  readonly retry?: boolean;
 }) {
   yield* validateLocalIssue(options.issue, options.checks);
   const root = join(options.stateDir, "workspace");
   const home = join(options.stateDir, "shell-home");
-  yield* Effect.tryPromise({
+  const createDirectories = Effect.tryPromise({
     try: () =>
       Promise.all([
         mkdir(home, { recursive: true, mode: 0o700 }),
@@ -162,7 +165,29 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
       ]),
     catch: (error) => localIoError("Could not create the local session directory", error),
   });
+  if (options.retry) {
+    yield* Effect.tryPromise({
+      try: () => stat(join(options.stateDir, "session.sqlite")),
+      catch: () =>
+        new LocalRunnerError({
+          message: "Retry requires an existing saved session; no state was created",
+        }),
+    });
+  } else yield* createDirectories;
   yield* holdLocalLock(options.stateDir);
+  // Inspect under the same lock before opening a Harness, which would resume tasks and initialize state.
+  const retryState = options.retry
+    ? yield* readLocalSession(
+        join(options.stateDir, "session.sqlite"),
+        options.repo,
+        options.issue,
+      ).pipe(Effect.mapError((error) => new LocalRunnerError({ message: error.message })))
+    : undefined;
+  if (options.retry) {
+    if (retryState?.status !== "failed")
+      return yield* new LocalRunnerError({ message: "Only failed sessions can be retried" });
+    yield* createDirectories;
+  }
   const storage = yield* Effect.acquireRelease(
     Effect.tryPromise({
       try: () => openNodeSqliteStorage(join(options.stateDir, "session.sqlite")),
@@ -191,7 +216,16 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
     },
     ...options.pi,
   }).pipe(Effect.provide(serviceContext));
-  if (options.admit !== false && (yield* host.view()).state.status === "idle") {
+  if (retryState != null) {
+    const result = yield* host.deliver(
+      Events.Retry.make({ expectedRevision: retryState.revision }),
+      `local-retry:${retryState.revision}`,
+    );
+    if (result === "stale")
+      return yield* new LocalRunnerError({
+        message: "The saved session changed; inspect its status before retrying",
+      });
+  } else if (options.admit !== false && (yield* host.view()).state.status === "idle") {
     const context = yield* github.fetchIssueContext(options.repo, options.issue);
     yield* host.deliver(Events.IssueLabeled.make(context), `local-issue:${options.issue}`);
   }
