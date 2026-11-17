@@ -4,7 +4,7 @@ import { Schema } from "effect";
 /** Saved local execution state, suitable for a CLI or a future authenticated UI. */
 export const LocalSessionStatus = Schema.Struct({
   issue: Schema.Int,
-  source: Schema.Literals(["session", "queued", "missing", "unavailable"]),
+  source: Schema.Literals(["session", "queued", "uninitialized", "missing", "unavailable"]),
   state: Schema.NullOr(SessionState),
   error: Schema.NullOr(Schema.String),
 });

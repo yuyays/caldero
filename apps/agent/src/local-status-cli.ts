@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs, stripVTControlCharacters } from "node:util";
-import type { LocalStatus } from "@puchero/contracts/local-status";
+import { LocalStatus } from "@puchero/contracts/local-status";
 import { Repo } from "@puchero/domain";
 import { Effect, Schema } from "effect";
 import { collectLocalStatus, LocalStatusError } from "./local-status.ts";
@@ -10,6 +10,17 @@ import { collectLocalStatus, LocalStatusError } from "./local-status.ts";
 const decodeRepoConfig = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ repo: Repo })),
 );
+const decodeStatus = Schema.decodeUnknownEffect(LocalStatus);
+const terminalText = (value: string) =>
+  stripVTControlCharacters(value)
+    .split("")
+    .filter(
+      (character) =>
+        character === "\n" ||
+        character === "\t" ||
+        (character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127),
+    )
+    .join("");
 const help = `Read saved local Puchero status without starting an agent.
 
 pnpm --filter @puchero/agent status [--issue NUMBER] [--json]
@@ -25,7 +36,7 @@ Watch lock ownership is not a heartbeat. Saved session phases do not prove a wor
 Status never resumes tasks or initializes/migrates session storage. SQLite may create WAL/SHM sidecars.`;
 
 const excerpt = (value: string, limit = 2000) => {
-  const plain = stripVTControlCharacters(value);
+  const plain = terminalText(value);
   return plain.length <= limit
     ? plain
     : `${plain.slice(0, limit)}\n… truncated; --json contains the saved value`;
@@ -50,7 +61,10 @@ const formatStatus = (snapshot: LocalStatus, detail: boolean) => {
     lines.push(
       `Run ${state.runId}; candidate ${state.version}; phase attempts ${state.attempts}; queued follow-ups ${state.queued.length}`,
     );
-    lines.push(`Updated: ${new Date(state.updatedAt).toISOString()}`);
+    const updated = new Date(state.updatedAt);
+    lines.push(
+      `Updated: ${Number.isNaN(updated.getTime()) ? "unavailable" : updated.toISOString()}`,
+    );
     if (state.pullRequest) lines.push(`PR: ${state.pullRequest.url}`);
     if (state.failure) lines.push(`Failure: ${excerpt(state.failure, detail ? 2000 : 250)}`);
     if (state.candidate) {
@@ -61,7 +75,7 @@ const formatStatus = (snapshot: LocalStatus, detail: boolean) => {
       if (detail) lines.push(excerpt(candidate.evidence));
     }
   }
-  return lines.map((line) => stripVTControlCharacters(line)).join("\n");
+  return lines.map(terminalText).join("\n");
 };
 
 const command = Effect.gen(function* () {
@@ -114,7 +128,14 @@ const command = Effect.gen(function* () {
       values["state-root"] ?? join(homedir(), ".local/state/puchero", repo.owner, repo.name),
     ),
     ...(issue === undefined ? {} : { issue }),
-  });
+  }).pipe(
+    Effect.flatMap(decodeStatus),
+    Effect.mapError((error) =>
+      error instanceof LocalStatusError
+        ? error
+        : new LocalStatusError({ message: "Could not collect a valid status snapshot" }),
+    ),
+  );
   return yield* Effect.sync(() => {
     console.log(
       values.json ? JSON.stringify(snapshot) : formatStatus(snapshot, issue !== undefined),

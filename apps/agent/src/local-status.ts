@@ -9,6 +9,7 @@ import { SessionState, type Repo } from "@puchero/domain";
 import { Effect, Result, Schema } from "effect";
 import { decodeWatchReceipt } from "./local-watch-receipt.ts";
 import { SessionDoc } from "./session-document.ts";
+import { sessionIssue } from "./session-identity.ts";
 
 export class LocalStatusError extends Schema.TaggedError<LocalStatusError>()("LocalStatusError", {
   message: Schema.String,
@@ -16,33 +17,21 @@ export class LocalStatusError extends Schema.TaggedError<LocalStatusError>()("Lo
 
 const isMissing = (error: unknown) =>
   typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-const optionalFile = Effect.fn("LocalStatus.optionalFile")((path: string) =>
-  Effect.tryPromise({
-    try: () =>
-      readFile(path, "utf8").catch((error: unknown) => {
-        if (isMissing(error)) return undefined;
-        throw error;
-      }),
-    catch: () => new LocalStatusError({ message: "Could not read watch receipts" }),
-  }),
+const optionalRead = Effect.fn("LocalStatus.optionalRead")(
+  <A>(read: () => Promise<A>, message: string) =>
+    Effect.tryPromise({
+      try: () =>
+        read().catch((error: unknown) => {
+          if (isMissing(error)) return undefined;
+          throw error;
+        }),
+      catch: () => new LocalStatusError({ message }),
+    }),
 );
 const decodeDocument = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ state: Schema.String })),
 );
 const decodeState = Schema.decodeUnknownEffect(Schema.fromJsonString(SessionState));
-const decodeLocks = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      locks: Schema.Array(
-        Schema.Struct({
-          pid: Schema.NullOr(Schema.Int),
-          path: Schema.NullOr(Schema.String),
-          type: Schema.String,
-        }),
-      ),
-    }),
-  ),
-);
 const exec = promisify(execFile);
 
 /** Read the owning document checkpoint, never opening a Harness or applying SQLite migrations. */
@@ -94,6 +83,7 @@ const readSession = Effect.fn("LocalStatus.readSession")(function* (
       message: "Unsupported Pi SQLite schema; status did not migrate it",
     });
   const revision = snapshot.rows[0];
+  if (snapshot.rows.length === 0) return null;
   // SessionDoc always checkpoints; accepting a delta here would silently report an older state.
   if (
     snapshot.rows.length !== 1 ||
@@ -104,12 +94,13 @@ const readSession = Effect.fn("LocalStatus.readSession")(function* (
       message: "Session document is missing or has an unsupported revision",
     });
   const document = yield* decodeDocument(revision.content).pipe(Effect.mapError(unavailable));
+  if (document.state === "") return null;
   const state = yield* decodeState(document.state).pipe(Effect.mapError(unavailable));
   if (
     state.repo.owner !== repo.owner ||
     state.repo.name !== repo.name ||
     state.issue !== issue ||
-    state.sessionId !== `${repo.owner}/${repo.name}#${issue}`
+    sessionIssue(repo, state.sessionId) !== issue
   )
     return yield* new LocalStatusError({
       message: "Stored session identity does not match this repository and issue",
@@ -120,35 +111,47 @@ const readSession = Effect.fn("LocalStatus.readSession")(function* (
 /** Kernel lock ownership is observable; it is not a heartbeat or proof of watcher health. */
 const inspectWatcher = Effect.fn("LocalStatus.inspectWatcher")(function* (stateRoot: string) {
   const lockPath = join(stateRoot, ".watch.lock");
-  const found = yield* Effect.tryPromise({
-    try: () =>
-      stat(lockPath)
-        .then(() => true)
-        .catch((error: unknown) => {
-          if (isMissing(error)) return false;
-          throw error;
-        }),
-    catch: () => new LocalStatusError({ message: "Could not inspect the watch lock" }),
-  });
+  const found = yield* optionalRead(
+    () => stat(lockPath, { bigint: true }),
+    "Could not inspect the watch lock",
+  );
   if (!found) return { lock: "free" as const, pid: null, error: null };
   const result = yield* Effect.tryPromise({
     try: (signal) =>
-      exec("lslocks", ["--json", "--notruncate", "--output", "PID,PATH,TYPE"], {
+      exec("lslocks", ["--raw", "--noheadings", "--output", "PID,INODE,MAJ:MIN,TYPE"], {
         signal,
         encoding: "utf8",
       }),
     catch: () =>
       new LocalStatusError({ message: "Could not query OS locks; watcher ownership is unknown" }),
   });
-  const locks = yield* decodeLocks(result.stdout).pipe(
-    Effect.mapError(() => new LocalStatusError({ message: "OS lock output was unreadable" })),
-  );
-  const owner = locks.locks.find((lock) => lock.type === "FLOCK" && lock.path === lockPath);
-  return {
-    lock: owner ? ("held" as const) : ("free" as const),
-    pid: owner?.pid ?? null,
-    error: null,
-  };
+  return yield* Effect.try({
+    try: () => {
+      // Linux dev_t encoding (sys/sysmacros.h); use IDs because lslocks paths can be unresolved.
+      const major = ((found.dev & 0xfff00n) >> 8n) | ((found.dev & 0xfffff00000000000n) >> 32n);
+      const minor = (found.dev & 0xffn) | ((found.dev & 0xffffff00000n) >> 12n);
+      const device = `${major}:${minor}`;
+      for (const line of result.stdout.split("\n").filter((row) => row.trim())) {
+        const fields = line.trim().split(/\s+/);
+        const [pid, inode, dev, kind] = fields;
+        if (fields.length !== 4 || !pid || !inode || !dev || !kind)
+          throw new Error("Invalid lock row");
+        if (kind !== "FLOCK") continue;
+        if (!/^\d+$/.test(inode) || !/^\d+:\d+$/.test(dev) || !/^-?\d+$/.test(pid))
+          throw new Error("Invalid flock identity");
+        if (BigInt(inode) === found.ino && dev === device) {
+          const owner = Number(pid);
+          return {
+            lock: "held" as const,
+            pid: Number.isSafeInteger(owner) && owner > 0 ? owner : null,
+            error: null,
+          };
+        }
+      }
+      return { lock: "free" as const, pid: null, error: null };
+    },
+    catch: () => new LocalStatusError({ message: "OS lock output was unreadable" }),
+  });
 });
 
 /** Collect saved local status without credentials, directory creation, model calls, or resuming work. */
@@ -159,18 +162,16 @@ export const collectLocalStatus = Effect.fn("collectLocalStatus")(function* (opt
 }) {
   if (options.issue !== undefined && (!Number.isSafeInteger(options.issue) || options.issue < 1))
     return yield* new LocalStatusError({ message: "Provide a positive --issue NUMBER" });
-  const stateRoot = yield* Effect.tryPromise({
-    try: () =>
-      realpath(options.stateRoot).catch((error: unknown) => {
-        if (isMissing(error)) return resolve(options.stateRoot);
-        throw error;
-      }),
-    catch: () => new LocalStatusError({ message: "Could not access the state root" }),
-  });
+  const stateRoot =
+    (yield* optionalRead(() => realpath(options.stateRoot), "Could not access the state root")) ??
+    resolve(options.stateRoot);
   const warnings: string[] = [];
   const pending = new Set<number>();
   const issues = new Set<number>();
-  const receipt = yield* optionalFile(join(stateRoot, "watch.json")).pipe(
+  const receipt = yield* optionalRead(
+    () => readFile(join(stateRoot, "watch.json"), "utf8"),
+    "Could not read watch receipts",
+  ).pipe(
     Effect.flatMap((text) =>
       text === undefined
         ? Effect.undefined
@@ -197,14 +198,11 @@ export const collectLocalStatus = Effect.fn("collectLocalStatus")(function* (opt
       receipt.success.settled.forEach((issue) => issues.add(issue));
     }
   }
-  const entries = yield* Effect.tryPromise({
-    try: () =>
-      readdir(stateRoot, { withFileTypes: true }).catch((error: unknown) => {
-        if (isMissing(error)) return [];
-        throw error;
-      }),
-    catch: () => new LocalStatusError({ message: "Could not list saved sessions" }),
-  });
+  const entries =
+    (yield* optionalRead(
+      () => readdir(stateRoot, { withFileTypes: true }),
+      "Could not list saved sessions",
+    )) ?? [];
   entries
     .filter(
       (entry) =>
@@ -218,17 +216,10 @@ export const collectLocalStatus = Effect.fn("collectLocalStatus")(function* (opt
     ? [...issues].sort((a, b) => a - b)
     : [options.issue]) {
     const path = join(stateRoot, String(issue), "session.sqlite");
-    const exists = yield* Effect.tryPromise({
-      try: () =>
-        stat(path)
-          .then(() => true)
-          .catch((error: unknown) => {
-            if (isMissing(error)) return false;
-            throw error;
-          }),
-      catch: () => new LocalStatusError({ message: "Could not access session storage" }),
-    }).pipe(Effect.result);
-    if (Result.isSuccess(exists) && !exists.success) {
+    const exists = yield* optionalRead(() => stat(path), "Could not access session storage").pipe(
+      Effect.result,
+    );
+    if (Result.isSuccess(exists) && exists.success === undefined) {
       sessions.push({
         issue,
         source: pending.has(issue) ? "queued" : "missing",
@@ -245,7 +236,12 @@ export const collectLocalStatus = Effect.fn("collectLocalStatus")(function* (opt
     sessions.push(
       Result.isFailure(saved)
         ? { issue, source: "unavailable", state: null, error: saved.failure.message }
-        : { issue, source: "session", state: saved.success, error: null },
+        : {
+            issue,
+            source: saved.success === null ? "uninitialized" : "session",
+            state: saved.success,
+            error: null,
+          },
     );
   }
   const watcher = yield* inspectWatcher(stateRoot).pipe(

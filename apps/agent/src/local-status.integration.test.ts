@@ -7,12 +7,13 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { makeFakeGitHub } from "./fake-github.ts";
 import { openLocalIssue } from "./local-runner.ts";
 import { collectLocalStatus } from "./local-status.ts";
 import { scriptedModels } from "./testing.ts";
 import { openLocalWatcher } from "./local-watch.ts";
+import { LocalStatus } from "@puchero/contracts/local-status";
 
 const repo = { owner: "acme", name: "app" };
 const directory = Effect.acquireRelease(
@@ -31,7 +32,7 @@ describe("Read-only local status", () => {
             repo,
             issue: 7,
             stateDir: join(stateRoot, "7"),
-            checks: ["false"],
+            checks: ["printf 'check\\rspoof\\007'; false"],
             pi: scriptedModels(),
           }).pipe(Effect.provide(github.layer));
           yield* host.drain();
@@ -41,6 +42,23 @@ describe("Read-only local status", () => {
       expect(status.sessions[0]?.state).toMatchObject({ status: "failed", attempts: 3 });
       expect(status.sessions[0]?.state?.failure).toContain("exit 1");
       expect(github.state.pullRequests).toHaveLength(0);
+      const text = yield* Effect.promise(() =>
+        promisify(execFile)(
+          process.execPath,
+          [
+            join(import.meta.dirname, "local-status-cli.ts"),
+            "--repo",
+            "acme/app",
+            "--state-root",
+            stateRoot,
+            "--issue",
+            "7",
+          ],
+          { env: { PATH: "/usr/bin:/bin", HOME: stateRoot }, encoding: "utf8" },
+        ),
+      );
+      expect(text.stdout.includes("\r")).toBe(false);
+      expect(text.stdout.includes("\u0007")).toBe(false);
     }),
   );
 
@@ -112,7 +130,9 @@ describe("Read-only local status", () => {
             discover: Effect.succeed([]),
             runIssue: () => Effect.succeed("published" as const),
           });
-          expect((yield* collectLocalStatus({ repo, stateRoot })).watcher.lock).toBe("held");
+          const status = yield* collectLocalStatus({ repo, stateRoot });
+          expect(status.watcher.lock).toBe("held");
+          expect(status.watcher.pid).not.toBeNull();
         }),
       );
       expect((yield* collectLocalStatus({ repo, stateRoot })).watcher.lock).toBe("free");
@@ -134,6 +154,10 @@ describe("Read-only local status", () => {
         ),
       );
       yield* Effect.promise(() => mkdir(join(stateRoot, "8")));
+      const empty = yield* Effect.promise(() =>
+        openNodeSqliteStorage(join(stateRoot, "5/session.sqlite")),
+      );
+      yield* Effect.promise(() => empty.close(BACKGROUND_CONTEXT));
       yield* Effect.promise(() => writeFile(join(stateRoot, "8/session.sqlite"), "corrupt"));
       const futurePath = join(stateRoot, "9/session.sqlite");
       const storage = yield* Effect.promise(() => openNodeSqliteStorage(futurePath));
@@ -158,14 +182,16 @@ describe("Read-only local status", () => {
       );
       const snapshot = yield* collectLocalStatus({ repo, stateRoot });
       expect(snapshot.sessions.map((session) => [session.issue, session.source])).toEqual([
+        [5, "uninitialized"],
         [7, "queued"],
         [8, "unavailable"],
         [9, "unavailable"],
         [10, "session"],
       ]);
-      expect(snapshot.sessions[3]?.state?.status).toBe("published");
+      expect(snapshot.sessions[4]?.state?.status).toBe("published");
       expect((yield* Effect.promise(() => readdir(stateRoot))).sort()).toEqual([
         "10",
+        "5",
         "8",
         "9",
         "watch.json",
@@ -215,7 +241,8 @@ describe("Read-only local status", () => {
           { env: { PATH: "/usr/bin:/bin", HOME: root }, encoding: "utf8" },
         ),
       );
-      expect(JSON.parse(result.stdout)).toMatchObject({
+      const snapshot = yield* Schema.decodeUnknownEffect(LocalStatus)(JSON.parse(result.stdout));
+      expect(snapshot).toMatchObject({
         repo,
         stateRoot,
         sessions: [],
@@ -248,5 +275,55 @@ describe("Read-only local status", () => {
           }),
       );
     }),
+  );
+
+  it.effect(
+    "the CLI returns exit 1 with a structured snapshot when receipt identity mismatches",
+    () =>
+      Effect.gen(function* () {
+        const stateRoot = yield* directory;
+        yield* Effect.promise(() =>
+          writeFile(
+            join(stateRoot, "watch.json"),
+            JSON.stringify({
+              version: 1,
+              repo: { owner: "other", name: "app" },
+              pending: [7],
+              settled: [],
+            }),
+          ),
+        );
+        const result = yield* Effect.promise(() =>
+          promisify(execFile)(
+            process.execPath,
+            [
+              join(import.meta.dirname, "local-status-cli.ts"),
+              "--repo",
+              "acme/app",
+              "--state-root",
+              stateRoot,
+              "--json",
+            ],
+            { env: { PATH: "/usr/bin:/bin", HOME: stateRoot }, encoding: "utf8" },
+          ).then(
+            (value) => ({ code: 0, stdout: value.stdout }),
+            (error: unknown) => {
+              if (
+                error instanceof Error &&
+                "code" in error &&
+                typeof error.code === "number" &&
+                "stdout" in error &&
+                typeof error.stdout === "string"
+              )
+                return { code: error.code, stdout: error.stdout };
+              throw error;
+            },
+          ),
+        );
+        expect(result.code).toBe(1);
+        const snapshot = yield* Schema.decodeUnknownEffect(LocalStatus)(JSON.parse(result.stdout));
+        expect(snapshot.warnings).toHaveLength(1);
+        expect(snapshot.sessions).toEqual([]);
+      }),
   );
 });
