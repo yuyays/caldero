@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./http": "./src/http/index.ts",
     "./inbox": "./src/http/inbox.ts",
+    "./local-status": "./src/schemas/local-status.ts",
     "./schemas/user": "./src/schemas/user.ts"
   },
   "scripts": {

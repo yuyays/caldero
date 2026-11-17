@@ -16,8 +16,8 @@ import {
   type Report,
   runEndTask,
   type Storage,
-  type Tx,
   type TaskId,
+  type Tx,
   wrapTool,
   type ToolRegistration,
   type Wake,
@@ -35,6 +35,7 @@ import {
   SessionState,
 } from "@puchero/domain";
 import { Cause, Clock, Effect, Exit, Result, Schema } from "effect";
+import { SessionDoc } from "./session-document.ts";
 import {
   errorMessage,
   type Checkpoint,
@@ -66,23 +67,6 @@ const encodeState = Schema.encodeSync(stateJson);
 
 /** The kind of the transcript entry every puchero input is placed as; its data names the run it belongs to. */
 const inputKind = "puchero.input";
-
-/**
- * The session's own durable state, committed with the transcript: the reducer state, the result of every delivered
- * event (so redelivery is a no-op), and which run each submitted input started or steered.
- */
-const SessionDoc = defineDoc<{
-  state: string;
-  seen: Record<string, string>;
-  runs: Record<string, number>;
-  tasks?: Array<TaskId>;
-}>({
-  kind: "puchero.session",
-  version: 1,
-  scope: "session",
-  initial: () => ({ state: "", seen: {}, runs: {}, tasks: [] }),
-  checkpointWhen: () => true,
-});
 
 const WorkspaceDoc = defineDoc<{ bootId: string | null; checkpoint: Checkpoint | null }>({
   kind: "puchero.workspace",

@@ -204,6 +204,28 @@ does not change the current scan's queue. The next successful scan rechecks idle
 This is a foreground command on this machine, not an installed background daemon.
 See [watch design](../../docs/design/local-watch.md) for recovery and failure rules.
 
+### Inspect local progress and results
+
+From the repository root:
+
+```sh
+pnpm status
+pnpm status --issue 11
+pnpm --silent --filter @puchero/agent status --repo OWNER/REPO --json
+```
+
+Status reads the existing repository state root; use `--state-root PATH` for a
+custom watch root. It reports saved phases, attempts, queued follow-ups, failures,
+validation evidence and PR links without opening the agent or requiring a Pi
+login/private key. The default GitHub config supplies only repository identity;
+use `--repo OWNER/REPO` to avoid reading it. No network request is made.
+
+Watch output is **lock ownership**, not a health check. A saved active phase is
+not proof of a live worker. Unknown lock inspection and unreadable sessions are
+reported explicitly. SQLite may create WAL/SHM bookkeeping sidecars while reading;
+session data is never migrated or changed. The React inbox remains disconnected
+from local sessions. See [status design](../../docs/design/local-status.md).
+
 ## Automatic publication
 
 Every new session opens its PR automatically after the configured `PUCHERO_CHECKS` pass in the sandbox. There is

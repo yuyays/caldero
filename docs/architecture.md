@@ -11,14 +11,15 @@ and Puchero never merges automatically.
 
 ## Implementation and deployment status
 
-| Path or capability                                                            | Status                                                                                           |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Local issue runner and label watcher                                          | Implemented; exercised end to end with the real Pi login and GitHub App                          |
-| Cloudflare Worker, SessionDO, Container/R2 and React/D1 inbox                 | Implemented and exercised in local development; deployed Cloudflare operation remains unverified |
-| React inbox for local SQLite sessions                                         | Not connected; the inbox reads the Worker/SessionDO path                                         |
-| Slack, cron and general-purpose tool/result sessions                          | Future work                                                                                      |
-| Global/per-team SchedulerDO, multi-user scheduling and parallel local workers | Future work                                                                                      |
-| Automatic retry of terminal sessions and post-PR CI/review repair             | Future work                                                                                      |
+| Path or capability                                                            | Status                                                                                            |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Local issue runner and label watcher                                          | Implemented; exercised end to end with the real Pi login and GitHub App                           |
+| Local status command                                                          | Read-only saved phases, evidence, failures and PRs; OS watch-lock ownership is not a health check |
+| Cloudflare Worker, SessionDO, Container/R2 and React/D1 inbox                 | Implemented and exercised in local development; deployed Cloudflare operation remains unverified  |
+| React inbox for local SQLite sessions                                         | Not connected; the inbox reads the Worker/SessionDO path                                          |
+| Slack, cron and general-purpose tool/result sessions                          | Future work                                                                                       |
+| Global/per-team SchedulerDO, multi-user scheduling and parallel local workers | Future work                                                                                       |
+| Automatic retry of terminal sessions and post-PR CI/review repair             | Future work                                                                                       |
 
 The local and Cloudflare paths reuse the same session core. They are execution
 adapters, not separate agent implementations. The diagrams below distinguish
@@ -83,6 +84,8 @@ flowchart TD
     Runner --> Core[Shared SessionHost and Pi Durable]
     Profile[Installed Pi profile: model, reasoning and login] --> Core
     Core <--> SQLite[Per-issue Node SQLite]
+    StatusCLI[Read-only status CLI] -->|saved state| SQLite
+    StatusCLI -->|queue receipts| Receipts
     Core <--> Workspace[LocalWorkspace: local processes and git workspace]
     Workspace <--> Blobs[Disk checkpoints and frozen candidates]
     Core --> App[GitHub App adapter]
@@ -112,6 +115,10 @@ Local tools run with the current user's filesystem permissions. A minimal child
 environment and separate HOME do not make a filesystem sandbox. Checkpoints and
 patches are disk-backed, and local projections are a no-op: this path uses no
 Worker, SessionDO, D1 or R2, and does not feed the React inbox.
+
+`pnpm status` inspects saved SQLite state and OS watch-lock ownership without
+opening a host or loading credentials. It does not prove worker health or show
+live tool/check telemetry. See [local status](design/local-status.md).
 
 ## Cloudflare execution: implemented, deployment unverified
 
@@ -164,7 +171,7 @@ product proposals, not diagrams or modules currently in this repository. Slack,
 cron and Notion support, and team-aware scheduling, remain future work. The
 Worker/SessionDO/Container shape is the implemented cloud path documented above.
 
-Progress/status for local runs, watcher supervision, explicit terminal retries,
+Fine-grained tool/check progress, watcher supervision, explicit terminal retries,
 CI/review follow-ups, stronger local isolation and per-task resource limits remain
 separate work. Agent skills are workflow instructions, not runtime guarantees.
 The current harness passes issue and repository `AGENTS.md` context; it does not

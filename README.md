@@ -12,6 +12,7 @@ See `engines` in `package.json` for required versions. [MIT License](LICENSE).
 
 - [Local Pi setup and GitHub App configuration](apps/agent/README.md#run-locally-with-your-installed-pi-profile)
 - [Watch labeled issues locally](apps/agent/README.md#watch-labeled-issues-locally)
+- [Inspect saved local status](apps/agent/README.md#inspect-local-progress-and-results) with `pnpm status`
 - [Cloudflare local development](apps/agent/README.md#agent-local-development) and
   [production configuration](apps/agent/README.md#production-configuration-no-deployment-performed)
 
