@@ -4,6 +4,8 @@ import { promisify } from "node:util";
 import { watch } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 import { Events } from "@puchero/domain";
@@ -96,6 +98,34 @@ describe("Local durable runner", () => {
         });
         expect(recovered.candidate?.binding).toEqual(first.candidate?.binding);
         expect(github.state.pullRequests).toHaveLength(1);
+      }),
+  );
+
+  it.effect(
+    "refuses uninitialized or unreadable retry storage without changing it or running the model",
+    () =>
+      Effect.gen(function* () {
+        const stateDir = yield* directory;
+        const path = join(stateDir, "session.sqlite");
+        const storage = yield* Effect.promise(() => openNodeSqliteStorage(path));
+        yield* Effect.promise(() => storage.close(BACKGROUND_CONTEXT));
+        const github = makeFakeGitHub({ source: [] });
+        const pi = scriptedModels();
+        pi.control.script = () => {
+          throw new Error("Refused retry must not run the model");
+        };
+        const retry = () =>
+          Effect.scoped(
+            openLocalIssue({ repo, issue: 7, stateDir, checks: ["true"], pi, retry: true }),
+          ).pipe(Effect.provide(github.layer), Effect.flip);
+        const before = yield* Effect.promise(() => readFile(path));
+        expect((yield* retry()).message).toContain("Only failed");
+        expect(yield* Effect.promise(() => readFile(path))).toEqual(before);
+        yield* Effect.promise(() => writeFile(path, "not a SQLite database"));
+        expect((yield* retry()).message).toContain("unreadable");
+        expect(yield* Effect.promise(() => readFile(path, "utf8"))).toBe("not a SQLite database");
+        expect(github.state.pullRequests).toEqual([]);
+        expect(yield* Effect.promise(() => readdir(stateDir))).not.toContain("workspace");
       }),
   );
 
@@ -308,7 +338,10 @@ describe("Local durable runner", () => {
         pi: scriptedModels(),
       };
       const first = yield* openLocalIssue(options).pipe(Effect.provide(github.layer));
-      const busy = yield* openLocalIssue(options).pipe(Effect.provide(github.layer), Effect.flip);
+      const busy = yield* openLocalIssue({ ...options, retry: true }).pipe(
+        Effect.provide(github.layer),
+        Effect.flip,
+      );
       expect(busy).toMatchObject({
         _tag: "LocalRunnerError",
         message: expect.stringContaining("ELOCKED"),

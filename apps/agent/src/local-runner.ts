@@ -185,7 +185,9 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
     : undefined;
   if (options.retry) {
     if (retryState?.status !== "failed")
-      return yield* new LocalRunnerError({ message: "Only failed sessions can be retried" });
+      return yield* new LocalRunnerError({
+        message: `Only failed sessions can be retried. Resume active work with pnpm --filter @puchero/agent local --issue ${options.issue}, using the same --state-dir and --check options.`,
+      });
     yield* createDirectories;
   }
   const storage = yield* Effect.acquireRelease(
