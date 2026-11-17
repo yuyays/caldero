@@ -142,6 +142,33 @@ class LocalExecutionEnv extends NodeExecutionEnv {
   }
 }
 
+/** Refuse retry before host activation; the caller scope retains the validated session lock. */
+const prepareLocalRetry = Effect.fn("prepareLocalRetry")(function* (options: {
+  readonly stateDir: string;
+  readonly repo: Repo;
+  readonly issue: number;
+}) {
+  const path = join(options.stateDir, "session.sqlite");
+  yield* Effect.tryPromise({
+    try: () => stat(path),
+    catch: (error) =>
+      errorCode(error) === "ENOENT"
+        ? new LocalRunnerError({
+            message: "Retry requires an existing saved session; no state was created",
+          })
+        : localIoError("Could not access the saved session for retry", error),
+  });
+  yield* holdLocalLock(options.stateDir);
+  const state = yield* readLocalSession(path, options.repo, options.issue).pipe(
+    Effect.mapError((error) => new LocalRunnerError({ message: error.message })),
+  );
+  if (state?.status !== "failed")
+    return yield* new LocalRunnerError({
+      message: `Only failed sessions can be retried. Resume active work with pnpm --filter @puchero/agent local --issue ${options.issue}, using the same --state-dir and --check options.`,
+    });
+  return state;
+});
+
 /** The caller's scope owns this host, SQLite and lock; reopening resumes nonterminal work in the same issue. */
 export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   readonly repo: Repo;
@@ -165,31 +192,9 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
       ]),
     catch: (error) => localIoError("Could not create the local session directory", error),
   });
-  if (options.retry) {
-    yield* Effect.tryPromise({
-      try: () => stat(join(options.stateDir, "session.sqlite")),
-      catch: () =>
-        new LocalRunnerError({
-          message: "Retry requires an existing saved session; no state was created",
-        }),
-    });
-  } else yield* createDirectories;
-  yield* holdLocalLock(options.stateDir);
-  // Inspect under the same lock before opening a Harness, which would resume tasks and initialize state.
-  const retryState = options.retry
-    ? yield* readLocalSession(
-        join(options.stateDir, "session.sqlite"),
-        options.repo,
-        options.issue,
-      ).pipe(Effect.mapError((error) => new LocalRunnerError({ message: error.message })))
-    : undefined;
-  if (options.retry) {
-    if (retryState?.status !== "failed")
-      return yield* new LocalRunnerError({
-        message: `Only failed sessions can be retried. Resume active work with pnpm --filter @puchero/agent local --issue ${options.issue}, using the same --state-dir and --check options.`,
-      });
-    yield* createDirectories;
-  }
+  const retryState = options.retry ? yield* prepareLocalRetry(options) : undefined;
+  yield* createDirectories;
+  if (!options.retry) yield* holdLocalLock(options.stateDir);
   const storage = yield* Effect.acquireRelease(
     Effect.tryPromise({
       try: () => openNodeSqliteStorage(join(options.stateDir, "session.sqlite")),

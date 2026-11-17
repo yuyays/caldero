@@ -202,8 +202,9 @@ PR and uses the next candidate version. Retry does not rebase, remove branch
 conflicts or repair credentials; fix the external cause before retrying.
 
 The normal attempt limit still applies. Repeating `pnpm local` only resumes
-nonterminal work; it does not request another retry. After an interrupted retry,
+nonterminal work; it does not request another retry. After an interrupted retry has committed,
 resume with the original `local --issue N` command and the same state directory.
+If retry had not committed, the session remains failed and needs the retry command again.
 The watcher still leaves settled terminal sessions alone. Use `pnpm status
 --issue 11` to inspect the result. See [retry design](../../docs/design/local-retry.md).
 

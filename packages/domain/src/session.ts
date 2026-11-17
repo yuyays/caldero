@@ -189,7 +189,7 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
   };
 
   /** Starts the next run after a failure, or fails the session once the attempts are used up. */
-  const retry = (text: string, failure: string): Decision => {
+  const retryRun = (text: string, failure: string): Decision => {
     const attempts = state.attempts + 1;
     if (attempts >= attemptLimit) return applied({ status: "failed", attempts, failure });
     const runId = state.runId + 1;
@@ -270,14 +270,14 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
     },
     ValidationFailed: ({ runId, evidence }) => {
       if (!isCurrentRun(runId, "validating")) return unchanged("stale");
-      return retry(
+      return retryRun(
         `Validation failed. Fix the failures and finish again.\n\n${evidence}`,
         `Validation failed: ${evidence}`,
       );
     },
     RunFailed: ({ runId, reason }) => {
       if (!isCurrentRun(runId, "running", "validating")) return unchanged("stale");
-      return retry(
+      return retryRun(
         `The previous attempt failed (${reason}). Continue the task.`,
         `Run failed: ${reason}`,
       );
