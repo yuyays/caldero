@@ -14,6 +14,7 @@
     "dev:api": "vp run --filter @puchero/api dev",
     "build": "vp run --filter \"@puchero/*\" build",
     "start:api": "vp run @puchero/api#start",
+    "status": "pnpm --filter @puchero/agent status",
     "typecheck": "vp run --cache --concurrency-limit 4 --filter \"@puchero/*\" typecheck",
     "test": "vp run --filter \"@puchero/*\" test && node --test tools/effect-policy.test.js",
     "test:browser": "vp run --filter \"@puchero/*\" test:browser",

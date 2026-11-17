@@ -1,11 +1,12 @@
 import { mkdir, open, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
-import { Repo, type Status } from "@puchero/domain";
+import type { Repo, Status } from "@puchero/domain";
 import { SessionFault } from "@puchero/contracts/inbox";
 import { Deferred, Effect, Result, Schema, type Scope } from "effect";
 import { holdLocalLock, LocalRunnerError } from "./local-runner.ts";
 import type { GitHubError } from "./ports.ts";
 import type { SessionHostError } from "./session-host.ts";
+import { type LocalWatchReceipt, decodeWatchReceipt } from "./local-watch-receipt.ts";
 
 export class LocalWatchError extends Schema.TaggedError<LocalWatchError>()("LocalWatchError", {
   message: Schema.String,
@@ -29,14 +30,6 @@ export const localWatchIssueError = (
       !(error instanceof LocalRunnerError && error.reason === "configuration"),
   });
 
-const issueNumber = Schema.Int.check(Schema.isGreaterThan(0));
-const receipt = Schema.Struct({
-  version: Schema.Literal(1),
-  repo: Repo,
-  pending: Schema.Array(issueNumber),
-  settled: Schema.Array(issueNumber),
-});
-const decodeReceipt = Schema.decodeUnknownEffect(Schema.fromJsonString(receipt));
 const settledStatuses: ReadonlySet<Status> = new Set([
   "published",
   "failed",
@@ -83,7 +76,7 @@ export const openLocalWatcher = Effect.fn("openLocalWatcher")(function* (options
   let state =
     stored === undefined
       ? { version: 1 as const, repo: options.repo, pending: [], settled: [] }
-      : yield* decodeReceipt(stored).pipe(
+      : yield* decodeWatchReceipt(stored).pipe(
           Effect.mapError(
             () =>
               new LocalWatchError({
@@ -94,7 +87,7 @@ export const openLocalWatcher = Effect.fn("openLocalWatcher")(function* (options
   if (state.repo.owner !== options.repo.owner || state.repo.name !== options.repo.name)
     return yield* new LocalWatchError({ message: "Watch state belongs to a different repository" });
   const stopping = yield* Deferred.make<void>();
-  const save = Effect.fn("LocalWatcher.save")(function* (next: typeof receipt.Type) {
+  const save = Effect.fn("LocalWatcher.save")(function* (next: typeof LocalWatchReceipt.Type) {
     const temporary = `${path}.tmp`;
     const ioError = () =>
       new LocalWatchError({
