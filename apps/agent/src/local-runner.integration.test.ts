@@ -153,7 +153,7 @@ describe("Local durable runner", () => {
           failure: null,
         });
         const file = recovered.patch?.files[0];
-        if (file?.change !== "write") return expect.unreachable();
+        if (file?.change !== "write") expect.unreachable();
         const text = Buffer.from(file.content, "base64").toString("utf8");
         expect(text).toContain("Previous failure:");
         expect(text).toContain("missing-fixture");
