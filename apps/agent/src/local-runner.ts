@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -7,6 +7,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { Events, type Repo } from "@puchero/domain";
 import { Effect, Layer, Schema } from "effect";
 import { makeDiskWorkspaceStore } from "./disk-workspace-store.ts";
+import { readLocalSession } from "./local-status.ts";
 import { LocalWorkspace } from "./local-workspace.ts";
 import { GitHub, Projection } from "./ports.ts";
 import { openSessionHost, type SessionHostOptions } from "./session-host.ts";
@@ -141,6 +142,33 @@ class LocalExecutionEnv extends NodeExecutionEnv {
   }
 }
 
+/** Refuse retry before host activation; the caller scope retains the validated session lock. */
+const prepareLocalRetry = Effect.fn("prepareLocalRetry")(function* (options: {
+  readonly stateDir: string;
+  readonly repo: Repo;
+  readonly issue: number;
+}) {
+  const path = join(options.stateDir, "session.sqlite");
+  yield* Effect.tryPromise({
+    try: () => stat(path),
+    catch: (error) =>
+      errorCode(error) === "ENOENT"
+        ? new LocalRunnerError({
+            message: "Retry requires an existing saved session; no state was created",
+          })
+        : localIoError("Could not access the saved session for retry", error),
+  });
+  yield* holdLocalLock(options.stateDir);
+  const state = yield* readLocalSession(path, options.repo, options.issue).pipe(
+    Effect.mapError((error) => new LocalRunnerError({ message: error.message })),
+  );
+  if (state?.status !== "failed")
+    return yield* new LocalRunnerError({
+      message: `Only failed sessions can be retried. Resume active work with pnpm --filter @puchero/agent local --issue ${options.issue}, using the same --state-dir and --check options.`,
+    });
+  return state;
+});
+
 /** The caller's scope owns this host, SQLite and lock; reopening resumes nonterminal work in the same issue. */
 export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   readonly repo: Repo;
@@ -150,11 +178,13 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   readonly pi: Pick<SessionHostOptions, "models" | "model" | "thinkingLevel">;
   /** Watch discovery can reopen saved work without admitting an idle, now-ineligible issue. */
   readonly admit?: boolean;
+  /** Explicitly retry only an existing failed session; never admit new work. */
+  readonly retry?: boolean;
 }) {
   yield* validateLocalIssue(options.issue, options.checks);
   const root = join(options.stateDir, "workspace");
   const home = join(options.stateDir, "shell-home");
-  yield* Effect.tryPromise({
+  const createDirectories = Effect.tryPromise({
     try: () =>
       Promise.all([
         mkdir(home, { recursive: true, mode: 0o700 }),
@@ -162,7 +192,9 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
       ]),
     catch: (error) => localIoError("Could not create the local session directory", error),
   });
-  yield* holdLocalLock(options.stateDir);
+  const retryState = options.retry ? yield* prepareLocalRetry(options) : undefined;
+  yield* createDirectories;
+  if (!options.retry) yield* holdLocalLock(options.stateDir);
   const storage = yield* Effect.acquireRelease(
     Effect.tryPromise({
       try: () => openNodeSqliteStorage(join(options.stateDir, "session.sqlite")),
@@ -191,7 +223,16 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
     },
     ...options.pi,
   }).pipe(Effect.provide(serviceContext));
-  if (options.admit !== false && (yield* host.view()).state.status === "idle") {
+  if (retryState != null) {
+    const result = yield* host.deliver(
+      Events.Retry.make({ expectedRevision: retryState.revision }),
+      `local-retry:${retryState.revision}`,
+    );
+    if (result === "stale")
+      return yield* new LocalRunnerError({
+        message: "The saved session changed; inspect its status before retrying",
+      });
+  } else if (options.admit !== false && (yield* host.view()).state.status === "idle") {
     const context = yield* github.fetchIssueContext(options.repo, options.issue);
     yield* host.deliver(Events.IssueLabeled.make(context), `local-issue:${options.issue}`);
   }

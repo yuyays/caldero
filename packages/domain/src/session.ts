@@ -69,6 +69,7 @@ export type SessionState = typeof SessionState.Type;
 export const SessionEvent = Schema.TaggedUnion({
   IssueLabeled: { context: Schema.String, baseSha: Schema.String, baseRef: Schema.String },
   UserInput: { text: Schema.String },
+  Retry: { expectedRevision: Schema.Int },
   RunAnswered: { runId: Schema.Int },
   Validated: { runId: Schema.Int, patchDigest: Schema.String, evidence: Schema.String },
   ValidationFailed: { runId: Schema.Int, evidence: Schema.String },
@@ -188,7 +189,7 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
   };
 
   /** Starts the next run after a failure, or fails the session once the attempts are used up. */
-  const retry = (text: string, failure: string): Decision => {
+  const retryRun = (text: string, failure: string): Decision => {
     const attempts = state.attempts + 1;
     if (attempts >= attemptLimit) return applied({ status: "failed", attempts, failure });
     const runId = state.runId + 1;
@@ -200,6 +201,24 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
       if (state.status !== "idle") return unchanged("duplicate");
       return applied({ status: "running", runId: 1, baseSha, baseRef }, [
         submit(1, "start", context),
+      ]);
+    },
+    Retry: ({ expectedRevision }) => {
+      if (state.status !== "failed" || state.revision !== expectedRevision)
+        return unchanged("stale");
+      // A frozen candidate means publication may have landed: keep its identity and reconcile first.
+      const binding = state.candidate?.binding;
+      if (binding !== undefined)
+        return applied({ status: "publishing", attempts: 0, failure: null }, [
+          (instructionId) => Instruction.cases.Reconcile.make({ instructionId, binding }),
+        ]);
+      const runId = state.runId + 1;
+      return applied({ status: "running", runId, attempts: 0, failure: null }, [
+        submit(
+          runId,
+          "start",
+          `Retry the failed task using the existing conversation and workspace. Fix the cause and finish again.\n\nPrevious failure:\n${state.failure ?? "No failure details were saved."}`,
+        ),
       ]);
     },
     UserInput: ({ text }) => {
@@ -251,14 +270,14 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
     },
     ValidationFailed: ({ runId, evidence }) => {
       if (!isCurrentRun(runId, "validating")) return unchanged("stale");
-      return retry(
+      return retryRun(
         `Validation failed. Fix the failures and finish again.\n\n${evidence}`,
         `Validation failed: ${evidence}`,
       );
     },
     RunFailed: ({ runId, reason }) => {
       if (!isCurrentRun(runId, "running", "validating")) return unchanged("stale");
-      return retry(
+      return retryRun(
         `The previous attempt failed (${reason}). Continue the task.`,
         `Run failed: ${reason}`,
       );

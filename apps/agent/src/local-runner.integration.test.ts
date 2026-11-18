@@ -1,7 +1,11 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { watch } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 import { Events } from "@puchero/domain";
@@ -18,6 +22,178 @@ const directory = Effect.acquireRelease(
 );
 
 describe("Local durable runner", () => {
+  it.effect("rejects incompatible retry arguments before loading Pi or GitHub credentials", () =>
+    Effect.gen(function* () {
+      const root = yield* directory;
+      for (const [args, message] of [
+        [["--retry", "--watch"], "--watch cannot"],
+        [["--retry", "--check-connection"], "--retry cannot"],
+        [["--retry", "--state-root", root], "require --watch"],
+      ] as const) {
+        const result = yield* Effect.tryPromise({
+          try: () =>
+            promisify(execFile)(
+              process.execPath,
+              [join(import.meta.dirname, "local-cli.ts"), ...args],
+              { env: { HOME: root, PATH: "/usr/bin:/bin" } },
+            ),
+          catch: (error) => ({
+            code: error instanceof Error && "code" in error ? error.code : null,
+            stderr: error instanceof Error && "stderr" in error ? error.stderr : null,
+          }),
+        }).pipe(Effect.flip);
+        expect(result).toMatchObject({ code: 1, stderr: expect.stringContaining(message) });
+      }
+    }),
+  );
+
+  it.effect(
+    "reconciles an exhausted lost publish response without editing or opening another PR",
+    () =>
+      Effect.gen(function* () {
+        const stateDir = yield* directory;
+        const github = makeFakeGitHub({
+          source: [],
+          dropResponses: { kind: "ambiguous", times: 1 },
+          failReconcile: { times: 2 },
+        });
+        const pi = scriptedModels();
+        const open = (retry = false) =>
+          openLocalIssue({
+            repo,
+            issue: 7,
+            stateDir,
+            checks: ["test -f notes.txt"],
+            pi,
+            retry,
+          }).pipe(Effect.provide(github.layer));
+        const first = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const host = yield* open();
+            yield* host.drain();
+            return (yield* host.view()).state;
+          }),
+        );
+        expect(first).toMatchObject({ status: "failed", version: 1, runId: 1 });
+        expect(github.state.pullRequests).toHaveLength(1);
+        pi.control.script = () => {
+          throw new Error("Publication retry must not call the model");
+        };
+        const retry = Events.Retry.make({ expectedRevision: first.revision });
+        const recovered = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const host = yield* open(true);
+            yield* host.drain();
+            // Replaying delivery after the work completes returns its first result without restarting it.
+            expect(yield* host.deliver(retry, `local-retry:${first.revision}`)).toBe("applied");
+            yield* host.drain();
+            return (yield* host.view()).state;
+          }),
+        );
+        expect(recovered).toMatchObject({
+          status: "published",
+          version: 1,
+          runId: 1,
+          pullRequest: { number: 100 },
+        });
+        expect(recovered.candidate?.binding).toEqual(first.candidate?.binding);
+        expect(github.state.pullRequests).toHaveLength(1);
+      }),
+  );
+
+  it.effect(
+    "refuses uninitialized or unreadable retry storage without changing it or running the model",
+    () =>
+      Effect.gen(function* () {
+        const stateDir = yield* directory;
+        const path = join(stateDir, "session.sqlite");
+        const storage = yield* Effect.promise(() => openNodeSqliteStorage(path));
+        yield* Effect.promise(() => storage.close(BACKGROUND_CONTEXT));
+        const github = makeFakeGitHub({ source: [] });
+        const pi = scriptedModels();
+        pi.control.script = () => {
+          throw new Error("Refused retry must not run the model");
+        };
+        const retry = () =>
+          Effect.scoped(
+            openLocalIssue({ repo, issue: 7, stateDir, checks: ["true"], pi, retry: true }),
+          ).pipe(Effect.provide(github.layer), Effect.flip);
+        const before = yield* Effect.promise(() => readFile(path));
+        expect((yield* retry()).message).toContain("Only failed");
+        expect(yield* Effect.promise(() => readFile(path))).toEqual(before);
+        yield* Effect.promise(() => writeFile(path, "not a SQLite database"));
+        expect((yield* retry()).message).toContain("unreadable");
+        expect(yield* Effect.promise(() => readFile(path, "utf8"))).toBe("not a SQLite database");
+        expect(github.state.pullRequests).toEqual([]);
+        expect(yield* Effect.promise(() => readdir(stateDir))).not.toContain("workspace");
+      }),
+  );
+
+  it.effect("refuses retry of a missing session without creating its directory", () =>
+    Effect.gen(function* () {
+      const root = yield* directory;
+      const stateDir = join(root, "missing");
+      const github = makeFakeGitHub({ source: [] });
+      const result = yield* Effect.scoped(
+        openLocalIssue({
+          repo,
+          issue: 7,
+          stateDir,
+          checks: ["true"],
+          pi: scriptedModels(),
+          retry: true,
+        }),
+      ).pipe(Effect.provide(github.layer), Effect.flip);
+      expect(result.message).toContain("existing saved session");
+      expect(yield* Effect.promise(() => readdir(root))).toEqual([]);
+      expect(github.state.pullRequests).toEqual([]);
+    }),
+  );
+
+  it.effect(
+    "retries failed checks in the saved workspace and keeps failure context after reopen",
+    () =>
+      Effect.gen(function* () {
+        const stateDir = yield* directory;
+        const github = makeFakeGitHub({ source: [] });
+        const pi = scriptedModels();
+        const open = (checks: ReadonlyArray<string>, retry = false) =>
+          openLocalIssue({ repo, issue: 7, stateDir, checks, pi, retry }).pipe(
+            Effect.provide(github.layer),
+          );
+        const failed = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const host = yield* open(["echo missing-fixture; false"]);
+            yield* host.drain();
+            return (yield* host.view()).state;
+          }),
+        );
+        expect(failed.status).toBe("failed");
+        const recovered = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const host = yield* open(["test -f notes.txt"], true);
+            yield* host.drain();
+            return yield* host.view();
+          }),
+        );
+        expect(recovered.state).toMatchObject({
+          status: "published",
+          runId: 4,
+          version: 1,
+          failure: null,
+        });
+        const file = recovered.patch?.files[0];
+        if (file?.change !== "write") expect.unreachable();
+        const text = Buffer.from(file.content, "base64").toString("utf8");
+        expect(text).toContain("Previous failure:");
+        expect(text).toContain("missing-fixture");
+        expect(github.state.pullRequests).toHaveLength(1);
+        const published = yield* Effect.scoped(open(["true"], true)).pipe(Effect.flip);
+        expect(published.message).toContain("Only failed");
+        expect(github.state.pullRequests).toHaveLength(1);
+      }),
+  );
+
   it.effect("reports an invalid session directory as a permanent watch configuration failure", () =>
     Effect.gen(function* () {
       const root = yield* directory;
@@ -162,7 +338,10 @@ describe("Local durable runner", () => {
         pi: scriptedModels(),
       };
       const first = yield* openLocalIssue(options).pipe(Effect.provide(github.layer));
-      const busy = yield* openLocalIssue(options).pipe(Effect.provide(github.layer), Effect.flip);
+      const busy = yield* openLocalIssue({ ...options, retry: true }).pipe(
+        Effect.provide(github.layer),
+        Effect.flip,
+      );
       expect(busy).toMatchObject({
         _tag: "LocalRunnerError",
         message: expect.stringContaining("ELOCKED"),

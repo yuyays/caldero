@@ -35,7 +35,7 @@ const decodeState = Schema.decodeUnknownEffect(Schema.fromJsonString(SessionStat
 const exec = promisify(execFile);
 
 /** Read the owning document checkpoint, never opening a Harness or applying SQLite migrations. */
-const readSession = Effect.fn("LocalStatus.readSession")(function* (
+export const readLocalSession = Effect.fn("readLocalSession")(function* (
   path: string,
   repo: Repo,
   issue: number,
@@ -232,7 +232,7 @@ export const collectLocalStatus = Effect.fn("collectLocalStatus")(function* (opt
       sessions.push({ issue, source: "unavailable", state: null, error: exists.failure.message });
       continue;
     }
-    const saved = yield* readSession(path, options.repo, issue).pipe(Effect.result);
+    const saved = yield* readLocalSession(path, options.repo, issue).pipe(Effect.result);
     sessions.push(
       Result.isFailure(saved)
         ? { issue, source: "unavailable", state: null, error: saved.failure.message }

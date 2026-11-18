@@ -36,6 +36,101 @@ const publishFailed = (kind: "retryable" | "permanent" | "ambiguous") =>
 const input = (text: string) => Events.UserInput.make({ text });
 
 describe("decide", () => {
+  it("reconciles a failed frozen publication and refuses retries outside failed state", () => {
+    const failed = run([...proposed, publishFailed("permanent")]).state;
+    const retried = decide(failed, Events.Retry.make({ expectedRevision: failed.revision }), now);
+    expect(retried.state).toMatchObject({
+      status: "publishing",
+      runId: 1,
+      version: 1,
+      attempts: 0,
+      candidate: { binding: firstBinding },
+    });
+    expect(retried.instructions).toMatchObject([
+      { _tag: "Reconcile", binding: firstBinding },
+      { _tag: "Project" },
+    ]);
+    for (const state of [
+      fresh(),
+      run([labeled]).state,
+      run(proposed).state,
+      run([labeled, cancel]).state,
+      run([
+        ...proposed,
+        Events.PublishSucceeded.make({ number: 42, url: "https://example.test/42" }),
+      ]).state,
+    ]) {
+      expect(
+        decide(state, Events.Retry.make({ expectedRevision: state.revision }), now).result,
+      ).toBe("stale");
+    }
+  });
+
+  it("allows retry of failed follow-up work while retaining the previous PR and next candidate version", () => {
+    const failed = run([
+      ...proposed,
+      input("Follow up"),
+      Events.PublishSucceeded.make({ number: 42, url: "https://example.test/42" }),
+      Events.RunFailed.make({ runId: 2, reason: "outage" }),
+      Events.RunFailed.make({ runId: 3, reason: "outage" }),
+      Events.RunFailed.make({ runId: 4, reason: "outage" }),
+    ]).state;
+    expect(failed).toMatchObject({
+      status: "failed",
+      candidate: null,
+      pullRequest: { number: 42 },
+    });
+    const retried = decide(failed, Events.Retry.make({ expectedRevision: failed.revision }), now);
+    expect(retried.state).toMatchObject({
+      status: "running",
+      runId: 5,
+      version: 1,
+      attempts: 0,
+      pullRequest: { number: 42 },
+    });
+    const checked = run([answered(5), validated(5, "sha256:followup")], retried.state);
+    expect(checked.instructions[0]).toMatchObject({
+      _tag: "Publish",
+      binding: { version: 2, runId: 5, patchDigest: "sha256:followup" },
+    });
+  });
+
+  it("explicitly restarts exhausted checks with failure context and rejects an old retry revision", () => {
+    const failed = run([
+      labeled,
+      answered(1),
+      Events.ValidationFailed.make({ runId: 1, evidence: "missing fixture" }),
+      answered(2),
+      Events.ValidationFailed.make({ runId: 2, evidence: "missing fixture" }),
+      answered(3),
+      Events.ValidationFailed.make({ runId: 3, evidence: "missing fixture" }),
+    ]).state;
+    expect(failed.status).toBe("failed");
+    const request = Events.Retry.make({ expectedRevision: failed.revision });
+    const retried = decide(failed, request, now);
+    expect(retried.state).toMatchObject({
+      status: "running",
+      runId: 4,
+      attempts: 0,
+      failure: null,
+    });
+    expect(retried.instructions).toMatchObject([
+      { _tag: "Submit", mode: "start", runId: 4, text: expect.stringContaining("missing fixture") },
+      { _tag: "Project" },
+    ]);
+    const failedAgain = run(
+      [
+        Events.RunFailed.make({ runId: 4, reason: "outage" }),
+        Events.RunFailed.make({ runId: 5, reason: "outage" }),
+        Events.RunFailed.make({ runId: 6, reason: "outage" }),
+      ],
+      retried.state,
+    ).state;
+    expect(failedAgain.status).toBe("failed");
+    expect(decide(failedAgain, request, now).result).toBe("stale");
+    expect(decide(retried.state, request, now).instructions).toEqual([]);
+  });
+
   it("publishes a validated frozen candidate automatically without recording a human approval", () => {
     const automatic = fresh();
     const decision = run(proposed, automatic);

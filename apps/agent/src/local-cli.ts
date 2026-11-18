@@ -29,11 +29,13 @@ const decodeGitHub = Schema.decodeUnknownEffect(
 const help = `Puchero with this machine's Pi login and saved model settings.
 
 pnpm --filter @puchero/agent local --issue NUMBER --check 'COMMAND' [--check 'COMMAND']
+pnpm retry --issue NUMBER --check COMMAND [--check COMMAND]
 pnpm --filter @puchero/agent local --watch --check 'COMMAND' [--check 'COMMAND']
 
 --github-config PATH   GitHub App config (default ~/.config/puchero/github-app.json)
 --pi-dir PATH          Pi profile directory (default Pi's configured agent directory)
 --state-dir PATH       Durable state (default ~/.local/state/puchero/OWNER/REPO/ISSUE)
+--retry                Explicitly retry an existing failed session (pnpm retry)
 --watch                Poll labeled issues, one at a time; resume admitted work on restart
 --label NAME           Watch label (default agent)
 --poll-seconds N       Delay between watch scans (default 60)
@@ -63,6 +65,7 @@ const command = Effect.gen(function* () {
         options: {
           issue: { type: "string" },
           watch: { type: "boolean" },
+          retry: { type: "boolean" },
           label: { type: "string" },
           "poll-seconds": { type: "string" },
           "state-root": { type: "string" },
@@ -81,10 +84,14 @@ const command = Effect.gen(function* () {
   const label = values.label ?? "agent";
   if (
     values.watch &&
-    (values.issue !== undefined || values["state-dir"] !== undefined || values["check-connection"])
+    (values.issue !== undefined ||
+      values["state-dir"] !== undefined ||
+      values["check-connection"] ||
+      values.retry)
   )
     return yield* new LocalRunnerError({
-      message: "--watch cannot be combined with --issue, --state-dir or --check-connection",
+      message:
+        "--watch cannot be combined with --issue, --state-dir, --retry or --check-connection",
     });
   if (
     !values.watch &&
@@ -94,6 +101,10 @@ const command = Effect.gen(function* () {
   )
     return yield* new LocalRunnerError({
       message: "--label, --poll-seconds and --state-root require --watch",
+    });
+  if (values.retry && values["check-connection"])
+    return yield* new LocalRunnerError({
+      message: "--retry cannot be combined with --check-connection",
     });
   const pollSeconds = Number(values["poll-seconds"] ?? 60);
   if (values.watch && (!Number.isFinite(pollSeconds) || pollSeconds < 1 || !label.trim()))
@@ -185,6 +196,7 @@ const command = Effect.gen(function* () {
     repo: config.repo,
     issue,
     stateDir,
+    retry: values.retry ?? false,
     checks: values.check ?? [],
     pi,
   }).pipe(Effect.provideService(GitHub, github));

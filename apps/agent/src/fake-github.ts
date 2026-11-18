@@ -2,6 +2,7 @@ import { Effect, Layer } from "effect";
 import {
   branchName,
   GitHub,
+  GitHubError,
   type Patch,
   PublishError,
   type PullRequest,
@@ -23,6 +24,8 @@ export const makeFakeGitHub = (options: {
   readonly source: ReadonlyArray<SourceFile>;
   readonly afterPublish?: () => void;
   /** Answer the next publish this many times with a failure of this kind after it landed. */
+  /** Fail reconciliation before inspecting remote state, as a temporary GitHub outage would. */
+  readonly failReconcile?: { times: number };
   readonly dropResponses?: { readonly kind: "retryable" | "ambiguous"; times: number };
   /** Branches that already exist, by name, with the digest of what they hold. */
   readonly branches?: ReadonlyArray<readonly [string, string]>;
@@ -63,6 +66,10 @@ export const makeFakeGitHub = (options: {
       return { number: pullRequest.number, url: pullRequest.url };
     }),
     reconcile: Effect.fn("FakeGitHub.reconcile")(function* (issue, binding) {
+      if (options.failReconcile !== undefined && options.failReconcile.times > 0) {
+        options.failReconcile.times -= 1;
+        return yield* new GitHubError({ message: "reconciliation unavailable" });
+      }
       const branch = branchName(issue, binding);
       const digest = state.branches.get(branch);
       if (digest === undefined) return { found: "nothing" } as const;

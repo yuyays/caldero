@@ -596,6 +596,32 @@ describe("SessionHost", () => {
     }),
   );
 
+  it.effect("resumes a committed explicit retry after a crash without starting another retry", () =>
+    Effect.gen(function* () {
+      const { host, crash, open, scripted, github } = yield* setup();
+      const normal = scripted.control.script;
+      scripted.control.script = failing;
+      yield* host.deliver(labeled, "first");
+      yield* host.drain();
+      const failed = (yield* host.view()).state;
+      expect(failed).toMatchObject({ status: "failed", runId: 3 });
+      scripted.control.script = normal;
+      const retry = Events.Retry.make({ expectedRevision: failed.revision });
+      const eventId = `retry:${failed.revision}`;
+      yield* host.deliver(retry, eventId);
+      crash();
+      const next = yield* open();
+      expect(yield* next.host.deliver(retry, eventId)).toBe("applied");
+      yield* next.host.drain();
+      expect((yield* next.host.view()).state).toMatchObject({
+        status: "published",
+        runId: 4,
+        version: 1,
+      });
+      expect(github.state.pullRequests).toHaveLength(1);
+    }),
+  );
+
   it.effect("deduplicates a redelivery after a crash before the acknowledgement", () =>
     Effect.gen(function* () {
       const { host, crash, open } = yield* setup();
