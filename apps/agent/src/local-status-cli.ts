@@ -22,6 +22,7 @@ const terminalText = (value: string) =>
         (character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127),
     )
     .join("");
+const terminalLine = (value: string) => terminalText(value).replace(/\s+/g, " ");
 const help = `Read saved local Puchero status without starting an agent.
 
 pnpm --filter @puchero/agent status [--issue NUMBER] [--json]
@@ -74,11 +75,11 @@ const formatStatus = (snapshot: LocalStatus, detail: boolean, ciRequested: boole
       lines.push(
         `GitHub CI: ${status === "none" ? "no checks reported" : status}${headSha ? ` (${headSha.slice(0, 12)})` : ""}`,
       );
-      if (error) lines.push(error);
+      if (error) lines.push(terminalLine(error));
       for (const check of checks) {
         if (check.status !== "failing") continue;
         lines.push(
-          `  Failed: ${check.name.replace(/[\t\n]/g, " ")}${check.url ? ` — ${check.url.replace(/\s/g, "")}` : ""}`,
+          `  Failed: ${terminalLine(check.name)}${check.url ? ` — ${check.url.replace(/\s/g, "")}` : ""}`,
         );
       }
       if (totalChecks > checks.length)

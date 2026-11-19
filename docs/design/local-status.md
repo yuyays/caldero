@@ -1,7 +1,7 @@
 # Read-only local status
 
 `pnpm status` reports saved sessions and watch-lock ownership without opening a
-session host. It does not need Pi authentication, a GitHub token or a private key.
+session host. The default offline view needs no Pi or GitHub credentials.
 The default GitHub configuration is read only for `repo.owner` and `repo.name`;
 `--repo OWNER/REPO` bypasses that file entirely.
 

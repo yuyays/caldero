@@ -74,6 +74,7 @@ describe("Read-only local status", () => {
       );
       const sha = "a".repeat(40);
       const link = "https://github.com/acme/app/actions/runs/42";
+      const checkName = "\u001b[31mtests\u001b[0m\nunit";
       const writeRollup = (statusCheckRollup: object | null, oid = sha) =>
         Effect.promise(() =>
           writeFile(
@@ -97,7 +98,7 @@ describe("Read-only local status", () => {
           nodes: [
             {
               kind: "CheckRun",
-              name: "tests",
+              name: checkName,
               status: "COMPLETED",
               conclusion: "FAILURE",
               detailsUrl: link,
@@ -116,12 +117,12 @@ describe("Read-only local status", () => {
           status: "failing",
           headSha: sha,
           checks: [
-            { name: "tests", status: "failing", url: link },
+            { name: checkName, status: "failing", url: link },
             { name: "docs", status: "pending", url: null },
           ],
         },
       });
-      expect((yield* cli(true, false)).stdout).toContain(`Failed: tests — ${link}`);
+      expect((yield* cli(true, false)).stdout).toContain(`Failed: tests unit — ${link}`);
       yield* writeRollup({ state: "EXPECTED", contexts: { totalCount: 0, nodes: [] } });
       expect((yield* cli(true, false)).stdout).toContain("GitHub CI: pending");
       yield* writeRollup(null);
