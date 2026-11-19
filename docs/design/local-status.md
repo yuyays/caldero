@@ -33,8 +33,8 @@ An arbitrary single-issue `--state-dir` outside that layout is not discovered.
   means no owner was found; `unknown` means inspection failed. This is not a
   heartbeat, health check or proof that a saved `running` phase is making progress.
 - Evidence is opaque saved command output for the candidate's run/version. Text
-  shows an excerpt for `--issue`; JSON retains the full value. There is no invented
-  per-check progress, fresh CI status or model-token telemetry.
+  shows an excerpt for `--issue`; JSON retains the full value. Saved validation
+  evidence contains no live check progress or model-token telemetry.
   Text mode removes terminal escapes and control bytes; JSON retains saved evidence.
 
 The result has a pure [shared schema](../../packages/contracts/src/schemas/local-status.ts)
@@ -45,13 +45,15 @@ unreadable sessions, warnings, or a missing explicitly requested issue; an ordin
 saved `failed` session is data and does not itself make the inspection fail.
 Unknown lock ownership remains visible without discarding the session snapshot.
 
-## Storage adapter
+## GitHub CI
 
 `pnpm status --issue N --ci` adds GitHub's check rollup for the current head
 of the saved PR. It uses the operator's GitHub CLI login and adds up to 100
 check details alongside the full count. A response for a different head or a
 GitHub error leaves the saved snapshot available and marks CI unavailable.
 CI results describe reported checks. GitHub evaluates merge requirements.
+
+## Storage adapter
 
 Pi Durable 1.5.2's normal SQLite initializer attempts migration writes even for an
 existing store. The status reader instead uses Chord's SQLite facade in
@@ -64,8 +66,8 @@ issue and session identity. Unsupported layouts fail closed, never migrate or
 fall back to a stale base. SDK/document-format changes must update this adapter
 and its real-store integration tests together.
 
-No Harness, ModelRuntime or GitHub adapter is opened. No runner/watch lock is
-acquired, no tasks are resumed and no credentials are loaded. SQLite read-only
+The storage reader opens no Harness, ModelRuntime or GitHub adapter. It leaves
+runner/watch locks and tasks alone. SQLite read-only
 WAL connections can create or touch `-wal`/`-shm` bookkeeping sidecars in an
 existing issue directory. They do not write session data or schema; these files
 must not be deleted while another process may be using them. A filesystem that

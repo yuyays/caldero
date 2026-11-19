@@ -140,7 +140,7 @@ export const readPullRequestCi = Effect.fn("readPullRequestCi")(function* (
       if (!commit || commit.oid !== pr.headRefOid)
         return unavailable("GitHub did not return checks for the current PR head. Try again.");
       const rollup = commit.statusCheckRollup;
-      if (!rollup || rollup.contexts.totalCount === 0)
+      if (!rollup)
         return { status: "none", headSha: commit.oid, checks: [], totalChecks: 0, error: null };
       const checks = rollup.contexts.nodes.map((check): PullRequestCi["checks"][number] => {
         if (check.kind === "StatusContext")

@@ -45,7 +45,7 @@ const excerpt = (value: string, limit = 2000) => {
 };
 
 /** Text is a compact view; JSON retains the authoritative saved fields and opaque check output. */
-const formatStatus = (snapshot: LocalStatus, detail: boolean) => {
+const formatStatus = (snapshot: LocalStatus, detail: boolean, ciRequested: boolean) => {
   const lines = [
     `Repository: ${snapshot.repo.owner}/${snapshot.repo.name}`,
     `State root: ${snapshot.stateRoot}`,
@@ -59,6 +59,7 @@ const formatStatus = (snapshot: LocalStatus, detail: boolean) => {
     const state = item.state;
     lines.push("", `#${item.issue} ${state?.status ?? item.source}`);
     if (item.error) lines.push(item.error);
+    if (ciRequested && !state?.pullRequest) lines.push("GitHub CI: no saved pull request");
     if (!state) continue;
     lines.push(
       `Run ${state.runId}; candidate ${state.version}; phase attempts ${state.attempts}; queued follow-ups ${state.queued.length}`,
@@ -166,7 +167,9 @@ const command = Effect.gen(function* () {
   );
   return yield* Effect.sync(() => {
     console.log(
-      values.json ? JSON.stringify(snapshot) : formatStatus(snapshot, issue !== undefined),
+      values.json
+        ? JSON.stringify(snapshot)
+        : formatStatus(snapshot, issue !== undefined, values.ci === true),
     );
     if (
       snapshot.warnings.length > 0 ||

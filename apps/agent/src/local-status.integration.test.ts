@@ -39,7 +39,7 @@ describe("Read-only local status", () => {
         }),
       );
       const response = join(root, "response.json");
-      const cli = (withCi: boolean) =>
+      const cli = (withCi: boolean, json = true) =>
         Effect.promise(() =>
           promisify(execFile)(
             process.execPath,
@@ -51,7 +51,7 @@ describe("Read-only local status", () => {
               root,
               "--issue",
               "7",
-              "--json",
+              ...(json ? ["--json"] : []),
               ...(withCi ? ["--ci"] : []),
             ],
             { env: { PATH: `${root}:/usr/bin:/bin`, HOME: root }, encoding: "utf8" },
@@ -74,50 +74,38 @@ describe("Read-only local status", () => {
       );
       const sha = "a".repeat(40);
       const link = "https://github.com/acme/app/actions/runs/42";
-      yield* Effect.promise(() =>
-        writeFile(
-          response,
-          JSON.stringify({
-            data: {
-              repository: {
-                pullRequest: {
-                  headRefOid: sha,
-                  commits: {
-                    nodes: [
-                      {
-                        commit: {
-                          oid: sha,
-                          statusCheckRollup: {
-                            state: "FAILURE",
-                            contexts: {
-                              totalCount: 2,
-                              nodes: [
-                                {
-                                  kind: "CheckRun",
-                                  name: "tests",
-                                  status: "COMPLETED",
-                                  conclusion: "FAILURE",
-                                  detailsUrl: link,
-                                },
-                                {
-                                  kind: "StatusContext",
-                                  context: "docs",
-                                  state: "PENDING",
-                                  targetUrl: null,
-                                },
-                              ],
-                            },
-                          },
-                        },
-                      },
-                    ],
+      const writeRollup = (statusCheckRollup: object | null, oid = sha) =>
+        Effect.promise(() =>
+          writeFile(
+            response,
+            JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    headRefOid: sha,
+                    commits: { nodes: [{ commit: { oid, statusCheckRollup } }] },
                   },
                 },
               },
+            }),
+          ),
+        );
+      yield* writeRollup({
+        state: "FAILURE",
+        contexts: {
+          totalCount: 2,
+          nodes: [
+            {
+              kind: "CheckRun",
+              name: "tests",
+              status: "COMPLETED",
+              conclusion: "FAILURE",
+              detailsUrl: link,
             },
-          }),
-        ),
-      );
+            { kind: "StatusContext", context: "docs", state: "PENDING", targetUrl: null },
+          ],
+        },
+      });
       const offline = JSON.parse((yield* cli(false)).stdout);
       expect(offline.sessions[0]).not.toHaveProperty("ci");
       expect(yield* Effect.promise(() => readdir(root))).not.toContain("gh-called");
@@ -133,6 +121,13 @@ describe("Read-only local status", () => {
           ],
         },
       });
+      expect((yield* cli(true, false)).stdout).toContain(`Failed: tests — ${link}`);
+      yield* writeRollup({ state: "EXPECTED", contexts: { totalCount: 0, nodes: [] } });
+      expect((yield* cli(true, false)).stdout).toContain("GitHub CI: pending");
+      yield* writeRollup(null);
+      expect((yield* cli(true, false)).stdout).toContain("GitHub CI: no checks reported");
+      yield* writeRollup(null, "b".repeat(40));
+      expect((yield* cli(true, false)).stdout).toContain("GitHub CI: unavailable");
       yield* Effect.promise(() => rm(response));
       const unavailable = JSON.parse((yield* cli(true)).stdout);
       expect(unavailable.sessions[0]).toMatchObject({
