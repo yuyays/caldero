@@ -237,6 +237,7 @@ From the repository root:
 ```sh
 pnpm status
 pnpm status --issue 11
+pnpm status --issue 11 --ci
 pnpm --silent --filter @puchero/agent status --repo OWNER/REPO --json
 ```
 
@@ -244,7 +245,15 @@ Status reads the existing repository state root; use `--state-root PATH` for a
 custom watch root. It reports saved phases, attempts, queued follow-ups, failures,
 validation evidence and PR links without opening the agent or requiring a Pi
 login/private key. The default GitHub config supplies only repository identity;
-use `--repo OWNER/REPO` to avoid reading it. No network request is made.
+use `--repo OWNER/REPO` to avoid reading it. Status runs offline by default.
+
+For an issue with a saved PR, `--ci` uses your signed-in [GitHub CLI](https://cli.github.com/)
+to read the aggregate check result on the PR's current head commit. It reports
+failing checks and their links when GitHub supplies them. `--json` includes the
+head SHA, check details, and total check count. The detail list includes up to
+100 checks. If GitHub cannot be reached or your login cannot access the PR,
+status still reports the saved session and marks CI as unavailable. A passing
+result describes the reported checks; merge eligibility is decided on GitHub.
 
 Watch output is **lock ownership**, not a health check. A saved active phase is
 not proof of a live worker. Unknown lock inspection and unreadable sessions are

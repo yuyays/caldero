@@ -11,15 +11,15 @@ and Puchero never merges automatically.
 
 ## Implementation and deployment status
 
-| Path or capability                                                            | Status                                                                                            |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Local issue runner and label watcher                                          | Implemented; exercised end to end with the real Pi login and GitHub App                           |
-| Local status command                                                          | Read-only saved phases, evidence, failures and PRs; OS watch-lock ownership is not a health check |
-| Cloudflare Worker, SessionDO, Container/R2 and React/D1 inbox                 | Implemented and exercised in local development; deployed Cloudflare operation remains unverified  |
-| React inbox for local SQLite sessions                                         | Not connected; the inbox reads the Worker/SessionDO path                                          |
-| Slack, cron and general-purpose tool/result sessions                          | Future work                                                                                       |
-| Global/per-team SchedulerDO, multi-user scheduling and parallel local workers | Future work                                                                                       |
-| Automatic terminal retry and post-PR CI/review repair                         | Future work                                                                                       |
+| Path or capability                                                            | Status                                                                                              |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Local issue runner and label watcher                                          | Implemented; exercised end to end with the real Pi login and GitHub App                             |
+| Local status command                                                          | Read-only saved phases, evidence, failures and PRs; opt-in GitHub CI on the saved PR's current head |
+| Cloudflare Worker, SessionDO, Container/R2 and React/D1 inbox                 | Implemented and exercised in local development; deployed Cloudflare operation remains unverified    |
+| React inbox for local SQLite sessions                                         | Not connected; the inbox reads the Worker/SessionDO path                                            |
+| Slack, cron and general-purpose tool/result sessions                          | Future work                                                                                         |
+| Global/per-team SchedulerDO, multi-user scheduling and parallel local workers | Future work                                                                                         |
+| Automatic terminal retry and post-PR CI/review repair                         | Future work                                                                                         |
 
 The local and Cloudflare paths reuse the same session core. They are execution
 adapters, not separate agent implementations. The diagrams below distinguish

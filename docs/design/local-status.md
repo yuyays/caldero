@@ -47,6 +47,12 @@ Unknown lock ownership remains visible without discarding the session snapshot.
 
 ## Storage adapter
 
+`pnpm status --issue N --ci` adds GitHub's check rollup for the current head
+of the saved PR. It uses the operator's GitHub CLI login and adds up to 100
+check details alongside the full count. A response for a different head or a
+GitHub error leaves the saved snapshot available and marks CI unavailable.
+CI results describe reported checks. GitHub evaluates merge requirements.
+
 Pi Durable 1.5.2's normal SQLite initializer attempts migration writes even for an
 existing store. The status reader instead uses Chord's SQLite facade in
 `read-only` mode, with a deferred read transaction and its normal busy timeout.

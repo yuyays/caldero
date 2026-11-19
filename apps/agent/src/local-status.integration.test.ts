@@ -22,6 +22,127 @@ const directory = Effect.acquireRelease(
 );
 
 describe("Read-only local status", () => {
+  it.effect("adds CI from the saved PR on demand and keeps local state when GitHub fails", () =>
+    Effect.gen(function* () {
+      const root = yield* directory;
+      const github = makeFakeGitHub({ source: [] });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const host = yield* openLocalIssue({
+            repo,
+            issue: 7,
+            stateDir: join(root, "7"),
+            checks: ["test -f notes.txt"],
+            pi: scriptedModels(),
+          }).pipe(Effect.provide(github.layer));
+          yield* host.drain();
+        }),
+      );
+      const response = join(root, "response.json");
+      const cli = (withCi: boolean) =>
+        Effect.promise(() =>
+          promisify(execFile)(
+            process.execPath,
+            [
+              join(import.meta.dirname, "local-status-cli.ts"),
+              "--repo",
+              "acme/app",
+              "--state-root",
+              root,
+              "--issue",
+              "7",
+              "--json",
+              ...(withCi ? ["--ci"] : []),
+            ],
+            { env: { PATH: `${root}:/usr/bin:/bin`, HOME: root }, encoding: "utf8" },
+          ),
+        );
+      yield* Effect.promise(() =>
+        writeFile(
+          join(root, "gh"),
+          [
+            "#!/bin/sh",
+            '[ "$1" = api ] && [ "$2" = graphql ] || exit 2',
+            "for expected in number=100 owner=acme repo=app; do",
+            '  case " $* " in *" $expected "*) ;; *) exit 3 ;; esac',
+            "done",
+            'touch "$HOME/gh-called"',
+            'cat "$HOME/response.json"',
+          ].join("\n"),
+          { mode: 0o700 },
+        ),
+      );
+      const sha = "a".repeat(40);
+      const link = "https://github.com/acme/app/actions/runs/42";
+      yield* Effect.promise(() =>
+        writeFile(
+          response,
+          JSON.stringify({
+            data: {
+              repository: {
+                pullRequest: {
+                  headRefOid: sha,
+                  commits: {
+                    nodes: [
+                      {
+                        commit: {
+                          oid: sha,
+                          statusCheckRollup: {
+                            state: "FAILURE",
+                            contexts: {
+                              totalCount: 2,
+                              nodes: [
+                                {
+                                  kind: "CheckRun",
+                                  name: "tests",
+                                  status: "COMPLETED",
+                                  conclusion: "FAILURE",
+                                  detailsUrl: link,
+                                },
+                                {
+                                  kind: "StatusContext",
+                                  context: "docs",
+                                  state: "PENDING",
+                                  targetUrl: null,
+                                },
+                              ],
+                            },
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          }),
+        ),
+      );
+      const offline = JSON.parse((yield* cli(false)).stdout);
+      expect(offline.sessions[0]).not.toHaveProperty("ci");
+      expect(yield* Effect.promise(() => readdir(root))).not.toContain("gh-called");
+      const online = JSON.parse((yield* cli(true)).stdout);
+      expect(online.sessions[0]).toMatchObject({
+        state: { status: "published", pullRequest: { number: 100 } },
+        ci: {
+          status: "failing",
+          headSha: sha,
+          checks: [
+            { name: "tests", status: "failing", url: link },
+            { name: "docs", status: "pending", url: null },
+          ],
+        },
+      });
+      yield* Effect.promise(() => rm(response));
+      const unavailable = JSON.parse((yield* cli(true)).stdout);
+      expect(unavailable.sessions[0]).toMatchObject({
+        state: { status: "published" },
+        ci: { status: "unavailable" },
+      });
+      expect(github.state.pullRequests).toHaveLength(1);
+    }),
+  );
+
   it.effect("shows a failed validation and its saved attempt count without retrying it", () =>
     Effect.gen(function* () {
       const stateRoot = yield* directory;

@@ -5,6 +5,7 @@ import { parseArgs, stripVTControlCharacters } from "node:util";
 import { LocalStatus } from "@puchero/contracts/local-status";
 import { Repo } from "@puchero/domain";
 import { Effect, Schema } from "effect";
+import { readPullRequestCi } from "./local-ci-status.ts";
 import { collectLocalStatus, LocalStatusError } from "./local-status.ts";
 
 const decodeRepoConfig = Schema.decodeUnknownEffect(
@@ -29,6 +30,7 @@ pnpm --filter @puchero/agent status [--issue NUMBER] [--json]
 --github-config PATH  Read only repo identity (default ~/.config/puchero/github-app.json)
 --state-root PATH     State root (default ~/.local/state/puchero/OWNER/REPO)
 --issue NUMBER        Inspect one issue, including saved validation evidence
+--ci                  Read the saved PR's current GitHub checks with gh (requires --issue)
 --json                Emit the full structured snapshot and saved evidence
 --help                Show this help
 
@@ -66,6 +68,21 @@ const formatStatus = (snapshot: LocalStatus, detail: boolean) => {
       `Updated: ${Number.isNaN(updated.getTime()) ? "unavailable" : updated.toISOString()}`,
     );
     if (state.pullRequest) lines.push(`PR: ${state.pullRequest.url}`);
+    if (item.ci) {
+      const { status, headSha, error, checks, totalChecks } = item.ci;
+      lines.push(
+        `GitHub CI: ${status === "none" ? "no checks reported" : status}${headSha ? ` (${headSha.slice(0, 12)})` : ""}`,
+      );
+      if (error) lines.push(error);
+      for (const check of checks) {
+        if (check.status !== "failing") continue;
+        lines.push(
+          `  Failed: ${check.name.replace(/[\t\n]/g, " ")}${check.url ? ` — ${check.url.replace(/\s/g, "")}` : ""}`,
+        );
+      }
+      if (totalChecks > checks.length)
+        lines.push(`Showing ${checks.length} of ${totalChecks} checks in the CI snapshot.`);
+    }
     if (state.failure) lines.push(`Failure: ${excerpt(state.failure, detail ? 2000 : 250)}`);
     if (state.candidate) {
       const candidate = state.candidate;
@@ -87,6 +104,7 @@ const command = Effect.gen(function* () {
           "github-config": { type: "string" },
           "state-root": { type: "string" },
           issue: { type: "string" },
+          ci: { type: "boolean" },
           json: { type: "boolean" },
           help: { type: "boolean" },
         },
@@ -94,6 +112,8 @@ const command = Effect.gen(function* () {
     catch: () => new LocalStatusError({ message: "Invalid status arguments; use --help" }),
   });
   if (values.help) return yield* Effect.sync(() => console.log(help));
+  if (values.ci && values.issue === undefined)
+    return yield* new LocalStatusError({ message: "--ci requires --issue NUMBER" });
   if (values.repo !== undefined && values["github-config"] !== undefined)
     return yield* new LocalStatusError({ message: "Use either --repo or --github-config" });
   let repo: Repo;
@@ -129,6 +149,14 @@ const command = Effect.gen(function* () {
     ),
     ...(issue === undefined ? {} : { issue }),
   }).pipe(
+    Effect.flatMap((local) =>
+      Effect.forEach(local.sessions, (item) => {
+        const pr = item.state?.pullRequest;
+        return values.ci && pr
+          ? readPullRequestCi(repo, pr.number).pipe(Effect.map((ci) => ({ ...item, ci })))
+          : Effect.succeed(item);
+      }).pipe(Effect.map((sessions) => ({ ...local, sessions }))),
+    ),
     Effect.flatMap(decodeStatus),
     Effect.mapError((error) =>
       error instanceof LocalStatusError
