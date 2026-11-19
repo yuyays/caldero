@@ -249,11 +249,13 @@ use `--repo OWNER/REPO` to avoid reading it. Status runs offline by default.
 
 For an issue with a saved PR, `--ci` uses your signed-in [GitHub CLI](https://cli.github.com/)
 to read the aggregate check result on the PR's current head commit. It reports
-failing checks and their links when GitHub supplies them. `--json` includes the
-head SHA, check details, and total check count. The detail list includes up to
-100 checks. If GitHub cannot be reached or your login cannot access the PR,
-status still reports the saved session and marks CI as unavailable. A passing
-result describes the reported checks; merge eligibility is decided on GitHub.
+failing checks and their links when GitHub supplies them, and consolidates runs
+of the same check in the returned details. `--json` includes the head SHA, check
+details and GitHub's full counts by state. When GitHub reports more than 100
+contexts, the terminal directs you to the full PR checks page for individual
+failures. If GitHub cannot be reached or your login cannot access the PR,
+status still reports the saved session and marks CI as unavailable. GitHub checks
+describe the current PR head, which can advance after local validation.
 
 Watch output is **lock ownership**, not a health check. A saved active phase is
 not proof of a live worker. Unknown lock inspection and unreadable sessions are

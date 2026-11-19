@@ -48,10 +48,17 @@ Unknown lock ownership remains visible without discarding the session snapshot.
 ## GitHub CI
 
 `pnpm status --issue N --ci` adds GitHub's check rollup for the current head
-of the saved PR. It uses the operator's GitHub CLI login and adds up to 100
-check details alongside the full count. A response for a different head or a
-GitHub error leaves the saved snapshot available and marks CI unavailable.
-CI results describe reported checks. GitHub evaluates merge requirements.
+of the saved PR on github.com. It uses the operator's GitHub CLI login.
+JSON includes GitHub's context counts by state and check details deduplicated
+within the first 100 contexts. GitHub's counts can include older runs.
+When details are partial, the terminal links to the full checks page for
+individual failures. Cancelled checks are distinct from failures. An issue
+without a saved PR reports `no-pr`; offline snapshots omit CI.
+
+A response for a different head or a GitHub error leaves the saved snapshot
+available and marks CI unavailable. CI results and lookup status are data
+and do not change the local command's exit status. GitHub evaluates merge
+requirements.
 
 ## Storage adapter
 

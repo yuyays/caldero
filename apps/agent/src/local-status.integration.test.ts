@@ -39,7 +39,7 @@ describe("Read-only local status", () => {
         }),
       );
       const response = join(root, "response.json");
-      const cli = (withCi: boolean, json = true) =>
+      const cli = (withCi: boolean, json = true, issue = "7") =>
         Effect.promise(() =>
           promisify(execFile)(
             process.execPath,
@@ -50,7 +50,7 @@ describe("Read-only local status", () => {
               "--state-root",
               root,
               "--issue",
-              "7",
+              issue,
               ...(json ? ["--json"] : []),
               ...(withCi ? ["--ci"] : []),
             ],
@@ -91,24 +91,74 @@ describe("Read-only local status", () => {
             }),
           ),
         );
+      const oldLink = "https://github.com/acme/app/actions/runs/1";
+      const checkSuite = {
+        app: { id: "actions" },
+        workflowRun: { event: "pull_request", workflow: { id: "ci", name: "CI" } },
+      };
+      const counts = {
+        checkRunCountsByState: [
+          { state: "FAILURE", count: 2 },
+          { state: "SUCCESS", count: 1 },
+          { state: "CANCELLED", count: 1 },
+          { state: "STALE", count: 1 },
+        ],
+        statusContextCountsByState: [{ state: "PENDING", count: 1 }],
+      };
+      const check = {
+        kind: "CheckRun",
+        status: "COMPLETED",
+        name: checkName,
+        detailsUrl: link,
+        startedAt: "2026-11-19T10:00:00Z",
+        checkSuite,
+      };
+      const contexts = {
+        ...counts,
+        totalCount: 6,
+        nodes: [
+          {
+            ...check,
+            name: "build",
+            conclusion: "FAILURE",
+            detailsUrl: oldLink,
+            startedAt: "2026-11-19T09:00:00Z",
+          },
+          { ...check, name: "build", conclusion: "SUCCESS" },
+          { ...check, conclusion: "FAILURE" },
+          { ...check, name: "cancel", conclusion: "CANCELLED" },
+          { ...check, name: "stale", conclusion: "STALE" },
+          {
+            kind: "StatusContext",
+            context: "docs",
+            state: "PENDING",
+            targetUrl: null,
+            createdAt: "2026-11-19T09:00:00Z",
+          },
+        ],
+      };
       yield* writeRollup({
         state: "FAILURE",
-        contexts: {
-          totalCount: 2,
-          nodes: [
-            {
-              kind: "CheckRun",
-              name: checkName,
-              status: "COMPLETED",
-              conclusion: "FAILURE",
-              detailsUrl: link,
-            },
-            { kind: "StatusContext", context: "docs", state: "PENDING", targetUrl: null },
-          ],
-        },
+        contexts,
       });
       const offline = JSON.parse((yield* cli(false)).stdout);
       expect(offline.sessions[0]).not.toHaveProperty("ci");
+      expect(yield* Effect.promise(() => readdir(root))).not.toContain("gh-called");
+      yield* Effect.promise(() =>
+        writeFile(
+          join(root, "watch.json"),
+          JSON.stringify({
+            version: 1,
+            repo,
+            pending: [8],
+            settled: [],
+          }),
+        ),
+      );
+      expect(JSON.parse((yield* cli(true, true, "8")).stdout).sessions[0]).toMatchObject({
+        source: "queued",
+        ci: { status: "no-pr" },
+      });
       expect(yield* Effect.promise(() => readdir(root))).not.toContain("gh-called");
       const online = JSON.parse((yield* cli(true)).stdout);
       expect(online.sessions[0]).toMatchObject({
@@ -117,13 +167,38 @@ describe("Read-only local status", () => {
           status: "failing",
           headSha: sha,
           checks: [
-            { name: checkName, status: "failing", url: link },
+            { name: "build", workflow: "CI", status: "passing", url: link },
+            { name: checkName, workflow: "CI", status: "failing", url: link },
+            { name: "cancel", status: "cancelled" },
+            { name: "stale", status: "pending" },
             { name: "docs", status: "pending", url: null },
           ],
         },
       });
-      expect((yield* cli(true, false)).stdout).toContain(`Failed: tests unit — ${link}`);
-      yield* writeRollup({ state: "EXPECTED", contexts: { totalCount: 0, nodes: [] } });
+      const terminal = (yield* cli(true, false)).stdout;
+      expect(terminal).toContain(`Failed: CI / tests unit — ${link}`);
+      expect(terminal).not.toContain(oldLink);
+      expect(terminal).not.toContain("Failed: CI / cancel");
+      yield* writeRollup({ state: "FAILURE", contexts: { ...contexts, totalCount: 101 } });
+      const partial = JSON.parse((yield* cli(true)).stdout);
+      expect(partial.sessions[0].ci).toMatchObject({
+        detailsTruncated: true,
+        totalChecks: 101,
+        checksUrl: "https://github.com/acme/app/pull/100/checks",
+        counts: { checkRuns: { SUCCESS: 1 }, statusContexts: { PENDING: 1 } },
+      });
+      expect((yield* cli(true, false)).stdout).toContain(
+        "https://github.com/acme/app/pull/100/checks",
+      );
+      yield* writeRollup({
+        state: "EXPECTED",
+        contexts: {
+          totalCount: 0,
+          nodes: [],
+          checkRunCountsByState: [],
+          statusContextCountsByState: [],
+        },
+      });
       expect((yield* cli(true, false)).stdout).toContain("GitHub CI: pending");
       yield* writeRollup(null);
       expect((yield* cli(true, false)).stdout).toContain("GitHub CI: no checks reported");

@@ -1,17 +1,27 @@
 import { Repo, SessionState } from "@puchero/domain";
 import { Schema } from "effect";
 
+/** Optional live observation of the current GitHub PR head. */
 export const PullRequestCi = Schema.Struct({
-  status: Schema.Literals(["none", "pending", "passing", "failing", "unavailable"]),
+  status: Schema.Literals(["no-pr", "none", "pending", "passing", "failing", "unavailable"]),
   headSha: Schema.NullOr(Schema.String),
   checks: Schema.Array(
     Schema.Struct({
       name: Schema.String,
-      status: Schema.Literals(["pending", "passing", "failing", "neutral"]),
+      workflow: Schema.NullOr(Schema.String),
+      status: Schema.Literals(["pending", "passing", "failing", "neutral", "cancelled"]),
       url: Schema.NullOr(Schema.String),
     }),
   ),
   totalChecks: Schema.Int,
+  checksUrl: Schema.NullOr(Schema.String),
+  detailsTruncated: Schema.Boolean,
+  counts: Schema.NullOr(
+    Schema.Struct({
+      checkRuns: Schema.Record(Schema.String, Schema.Int),
+      statusContexts: Schema.Record(Schema.String, Schema.Int),
+    }),
+  ),
   error: Schema.NullOr(Schema.String),
 });
 export type PullRequestCi = typeof PullRequestCi.Type;

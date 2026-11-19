@@ -16,10 +16,15 @@ const query = `
               state
               contexts(first: 100) {
                 totalCount
+                checkRunCountsByState { state count }
+                statusContextCountsByState { state count }
                 nodes {
                   kind: __typename
-                  ... on CheckRun { name status conclusion detailsUrl }
-                  ... on StatusContext { context state targetUrl }
+                  ... on CheckRun {
+                    name status conclusion detailsUrl startedAt
+                    checkSuite { app { id } workflowRun { event workflow { id name } } }
+                  }
+                  ... on StatusContext { context state targetUrl createdAt }
                 }
               }
             }
@@ -38,14 +43,29 @@ const Check = Schema.Union([
     status: Schema.String,
     conclusion: Schema.NullOr(Schema.String),
     detailsUrl: Schema.NullOr(Schema.String),
+    startedAt: Schema.NullOr(Schema.String),
+    checkSuite: Schema.NullOr(
+      Schema.Struct({
+        app: Schema.NullOr(Schema.Struct({ id: Schema.String })),
+        workflowRun: Schema.NullOr(
+          Schema.Struct({
+            event: Schema.String,
+            workflow: Schema.Struct({ id: Schema.String, name: Schema.String }),
+          }),
+        ),
+      }),
+    ),
   }),
   Schema.Struct({
     kind: Schema.Literal("StatusContext"),
     context: Schema.String,
     state: State,
     targetUrl: Schema.NullOr(Schema.String),
+    createdAt: Schema.String,
   }),
 ]);
+type GitHubCheck = typeof Check.Type;
+const StateCounts = Schema.Array(Schema.Struct({ state: Schema.String, count: Schema.Int }));
 const decode = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -63,6 +83,8 @@ const decode = Schema.decodeUnknownEffect(
                         state: State,
                         contexts: Schema.Struct({
                           totalCount: Schema.Int,
+                          checkRunCountsByState: StateCounts,
+                          statusContextCountsByState: StateCounts,
                           nodes: Schema.Array(Check),
                         }),
                       }),
@@ -86,23 +108,75 @@ const statusOf = {
   SUCCESS: "passing",
 } as const;
 
-const unavailable = (error: string): PullRequestCi => ({
-  status: "unavailable",
+export const noPullRequestCi: PullRequestCi = {
+  status: "no-pr",
   headSha: null,
   checks: [],
   totalChecks: 0,
-  error,
-});
+  checksUrl: null,
+  detailsTruncated: false,
+  counts: null,
+  error: null,
+};
 
 const exec = promisify(execFile);
 const safeLink = (url: string | null) =>
   url && URL.canParse(url) && ["https:", "http:"].includes(new URL(url).protocol) ? url : null;
+
+/** Choose the latest run per publisher, workflow, event and check name within the returned page. */
+const latestChecks = (nodes: ReadonlyArray<GitHubCheck>) => {
+  const latest = new Map<string, { check: GitHubCheck; time: string }>();
+  for (const check of nodes) {
+    const run = check.kind === "CheckRun" ? check.checkSuite?.workflowRun : null;
+    const key = JSON.stringify(
+      check.kind === "StatusContext"
+        ? [check.kind, check.context]
+        : [check.kind, check.checkSuite?.app?.id, run?.workflow.id, run?.event, check.name],
+    );
+    // An unstarted active run supersedes a completed attempt for the same check.
+    const time =
+      check.kind === "StatusContext"
+        ? check.createdAt
+        : (check.startedAt ?? (check.status === "COMPLETED" ? "" : "\uFFFF"));
+    const previous = latest.get(key);
+    if (!previous || time > previous.time) latest.set(key, { check, time });
+  }
+  return [...latest.values()].map(({ check }) => check);
+};
+
+const checkRunStatus = (
+  check: Extract<GitHubCheck, { kind: "CheckRun" }>,
+): PullRequestCi["checks"][number]["status"] => {
+  if (check.status !== "COMPLETED") return "pending";
+  switch (check.conclusion) {
+    case "SUCCESS":
+      return "passing";
+    case "CANCELLED":
+      return "cancelled";
+    case "NEUTRAL":
+    case "SKIPPED":
+      return "neutral";
+    case "OUTDATED":
+    case "STALE":
+    case null:
+      return "pending";
+    default:
+      return "failing";
+  }
+};
 
 /** Read one PR's head and GitHub's aggregate together. CLI authentication belongs to the operator. */
 export const readPullRequestCi = Effect.fn("readPullRequestCi")(function* (
   repo: Repo,
   number: number,
 ) {
+  const checksUrl = `https://github.com/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/pull/${number}/checks`;
+  const empty = { ...noPullRequestCi, checksUrl };
+  const unavailable = (error: string): PullRequestCi => ({
+    ...empty,
+    status: "unavailable",
+    error,
+  });
   return yield* Effect.tryPromise({
     try: (signal) =>
       exec(
@@ -124,12 +198,19 @@ export const readPullRequestCi = Effect.fn("readPullRequestCi")(function* (
         {
           encoding: "utf8",
           timeout: 10000,
+          maxBuffer: 1024 * 1024,
           signal,
-          env: { ...process.env, GH_PROMPT_DISABLED: "1" },
+          env: { ...process.env, GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1" },
         },
       ),
-    catch: () =>
-      "GitHub CI could not be fetched. Check gh auth status and access to this repository.",
+    catch: (error) => {
+      if (typeof error === "object" && error !== null) {
+        if ("code" in error && error.code === "ENOENT")
+          return "Install GitHub CLI (gh) to read PR checks.";
+        if ("killed" in error && error.killed) return "GitHub CI lookup timed out.";
+      }
+      return "GitHub CI could not be fetched. Check gh auth status and access to this PR.";
+    },
   }).pipe(
     Effect.flatMap(({ stdout }) =>
       decode(stdout).pipe(Effect.mapError(() => "GitHub returned an unreadable CI response.")),
@@ -140,30 +221,38 @@ export const readPullRequestCi = Effect.fn("readPullRequestCi")(function* (
       if (!commit || commit.oid !== pr.headRefOid)
         return unavailable("GitHub did not return checks for the current PR head. Try again.");
       const rollup = commit.statusCheckRollup;
-      if (!rollup)
-        return { status: "none", headSha: commit.oid, checks: [], totalChecks: 0, error: null };
-      const checks = rollup.contexts.nodes.map((check): PullRequestCi["checks"][number] => {
+      if (!rollup) return { ...empty, status: "none", headSha: commit.oid };
+      const contexts = rollup.contexts;
+      const checks = latestChecks(contexts.nodes).map((check): PullRequestCi["checks"][number] => {
         if (check.kind === "StatusContext")
           return {
             name: check.context,
+            workflow: null,
             status: statusOf[check.state],
             url: safeLink(check.targetUrl),
           };
-        const status =
-          check.status !== "COMPLETED" || check.conclusion === null
-            ? "pending"
-            : check.conclusion === "SUCCESS"
-              ? "passing"
-              : ["NEUTRAL", "SKIPPED"].includes(check.conclusion)
-                ? "neutral"
-                : "failing";
-        return { name: check.name, status, url: safeLink(check.detailsUrl) };
+        return {
+          name: check.name,
+          workflow: check.checkSuite?.workflowRun?.workflow.name ?? null,
+          status: checkRunStatus(check),
+          url: safeLink(check.detailsUrl),
+        };
       });
       return {
         status: statusOf[rollup.state],
         headSha: commit.oid,
         checks,
-        totalChecks: rollup.contexts.totalCount,
+        totalChecks: contexts.totalCount,
+        checksUrl,
+        detailsTruncated: contexts.totalCount > contexts.nodes.length,
+        counts: {
+          checkRuns: Object.fromEntries(
+            contexts.checkRunCountsByState.map(({ state, count }) => [state, count]),
+          ),
+          statusContexts: Object.fromEntries(
+            contexts.statusContextCountsByState.map(({ state, count }) => [state, count]),
+          ),
+        },
         error: null,
       };
     }),

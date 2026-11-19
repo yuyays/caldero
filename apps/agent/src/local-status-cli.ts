@@ -5,7 +5,7 @@ import { parseArgs, stripVTControlCharacters } from "node:util";
 import { LocalStatus } from "@puchero/contracts/local-status";
 import { Repo } from "@puchero/domain";
 import { Effect, Schema } from "effect";
-import { readPullRequestCi } from "./local-ci-status.ts";
+import { noPullRequestCi, readPullRequestCi } from "./local-ci-status.ts";
 import { collectLocalStatus, LocalStatusError } from "./local-status.ts";
 
 const decodeRepoConfig = Schema.decodeUnknownEffect(
@@ -25,7 +25,7 @@ const terminalText = (value: string) =>
 const terminalLine = (value: string) => terminalText(value).replace(/\s+/g, " ");
 const help = `Read saved local Puchero status without starting an agent.
 
-pnpm --filter @puchero/agent status [--issue NUMBER] [--json]
+pnpm --filter @puchero/agent status [--issue NUMBER [--ci]] [--json]
 
 --repo OWNER/REPO      Repository identity instead of reading GitHub config
 --github-config PATH  Read only repo identity (default ~/.config/puchero/github-app.json)
@@ -46,7 +46,7 @@ const excerpt = (value: string, limit = 2000) => {
 };
 
 /** Text is a compact view; JSON retains the authoritative saved fields and opaque check output. */
-const formatStatus = (snapshot: LocalStatus, detail: boolean, ciRequested: boolean) => {
+const formatStatus = (snapshot: LocalStatus, detail: boolean) => {
   const lines = [
     `Repository: ${snapshot.repo.owner}/${snapshot.repo.name}`,
     `State root: ${snapshot.stateRoot}`,
@@ -60,7 +60,7 @@ const formatStatus = (snapshot: LocalStatus, detail: boolean, ciRequested: boole
     const state = item.state;
     lines.push("", `#${item.issue} ${state?.status ?? item.source}`);
     if (item.error) lines.push(item.error);
-    if (ciRequested && !state?.pullRequest) lines.push("GitHub CI: no saved pull request");
+    if (item.ci?.status === "no-pr") lines.push("GitHub CI: no saved pull request");
     if (!state) continue;
     lines.push(
       `Run ${state.runId}; candidate ${state.version}; phase attempts ${state.attempts}; queued follow-ups ${state.queued.length}`,
@@ -71,19 +71,24 @@ const formatStatus = (snapshot: LocalStatus, detail: boolean, ciRequested: boole
     );
     if (state.pullRequest) lines.push(`PR: ${state.pullRequest.url}`);
     if (item.ci) {
-      const { status, headSha, error, checks, totalChecks } = item.ci;
+      const { status, headSha, error, checks, totalChecks, checksUrl, detailsTruncated } = item.ci;
       lines.push(
         `GitHub CI: ${status === "none" ? "no checks reported" : status}${headSha ? ` (${headSha.slice(0, 12)})` : ""}`,
       );
       if (error) lines.push(terminalLine(error));
       for (const check of checks) {
         if (check.status !== "failing") continue;
-        lines.push(
-          `  Failed: ${terminalLine(check.name)}${check.url ? ` — ${check.url.replace(/\s/g, "")}` : ""}`,
-        );
+        const name = check.workflow ? `${check.workflow} / ${check.name}` : check.name;
+        if (!detailsTruncated)
+          lines.push(
+            `  Failed: ${terminalLine(name)}${check.url ? ` — ${check.url.replace(/\s/g, "")}` : ""}`,
+          );
       }
-      if (totalChecks > checks.length)
-        lines.push(`Showing ${checks.length} of ${totalChecks} checks in the CI snapshot.`);
+      if (detailsTruncated)
+        lines.push(
+          `GitHub returned a partial detail list (${totalChecks} total contexts). See the full checks page.`,
+        );
+      if (checksUrl) lines.push(`  PR checks: ${checksUrl}`);
     }
     if (state.failure) lines.push(`Failure: ${excerpt(state.failure, detail ? 2000 : 250)}`);
     if (state.candidate) {
@@ -154,9 +159,10 @@ const command = Effect.gen(function* () {
     Effect.flatMap((local) =>
       Effect.forEach(local.sessions, (item) => {
         const pr = item.state?.pullRequest;
-        return values.ci && pr
+        if (!values.ci) return Effect.succeed(item);
+        return pr
           ? readPullRequestCi(repo, pr.number).pipe(Effect.map((ci) => ({ ...item, ci })))
-          : Effect.succeed(item);
+          : Effect.succeed({ ...item, ci: noPullRequestCi });
       }).pipe(Effect.map((sessions) => ({ ...local, sessions }))),
     ),
     Effect.flatMap(decodeStatus),
@@ -168,9 +174,7 @@ const command = Effect.gen(function* () {
   );
   return yield* Effect.sync(() => {
     console.log(
-      values.json
-        ? JSON.stringify(snapshot)
-        : formatStatus(snapshot, issue !== undefined, values.ci === true),
+      values.json ? JSON.stringify(snapshot) : formatStatus(snapshot, issue !== undefined),
     );
     if (
       snapshot.warnings.length > 0 ||
