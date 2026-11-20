@@ -36,6 +36,60 @@ const publishFailed = (kind: "retryable" | "permanent" | "ambiguous") =>
 const input = (text: string) => Events.UserInput.make({ text });
 
 describe("decide", () => {
+  it("binds an explicit repair to the saved PR and permits one edit attempt", () => {
+    const pr = { number: 42, url: "https://example.test/42" };
+    const published = run([...proposed, Events.PublishSucceeded.make(pr)]).state;
+    const target = { number: 42, headRef: "caldero/7-v1", headSha: "pr-head", baseRef: "main" };
+    const request = { expectedRevision: published.revision, target, context: "A test failed" };
+    for (const event of [
+      Events.Repair.make({ ...request, expectedRevision: published.revision - 1 }),
+      Events.Repair.make({ ...request, target: { ...target, number: 43 } }),
+    ]) {
+      expect(decide(published, event, now)).toMatchObject({ result: "stale", instructions: [] });
+    }
+    const repair = Events.Repair.make(request);
+    expect(decide(fresh(), repair, now).result).toBe("stale");
+    const first = decide(published, repair, now);
+    expect(first.state).toMatchObject({ status: "running", runId: 2, baseSha: "pr-head" });
+    expect(decide(first.state, repair, now).result).toBe("stale");
+    expect(decide(first.state, input("Start another edit"), now).result).toBe("stale");
+    for (const failure of [
+      run([Events.RunFailed.make({ runId: 2, reason: "model stopped" })], first.state),
+      run(
+        [answered(2), Events.ValidationFailed.make({ runId: 2, evidence: "checks failed" })],
+        first.state,
+      ),
+    ]) {
+      expect(failure.state).toMatchObject({ status: "failed", runId: 2, candidate: null });
+      expect(failure.instructions).toMatchObject([{ _tag: "Project" }]);
+      expect(
+        decide(failure.state, Events.Retry.make({ expectedRevision: failure.state.revision }), now)
+          .result,
+      ).toBe("stale");
+    }
+    const checked = run([answered(2), validated(2, "sha256:repair")], first.state);
+    expect(checked.instructions[0]).toMatchObject({
+      _tag: "Publish",
+      binding: { baseSha: "pr-head", repair: target, patchDigest: "sha256:repair" },
+    });
+    const failedPublish = decide(checked.state, publishFailed("permanent"), now).state;
+    const retry = decide(
+      failedPublish,
+      Events.Retry.make({ expectedRevision: failedPublish.revision }),
+      now,
+    );
+    expect(retry.instructions).toMatchObject([
+      { _tag: "Reconcile", binding: { repair: target } },
+      { _tag: "Project" },
+    ]);
+    expect(
+      decide(checked.state, Events.PublishSucceeded.make(pr), now).instructions[0],
+    ).toMatchObject({
+      _tag: "Comment",
+      text: expect.stringContaining("Added a checked CI repair"),
+    });
+  });
+
   it("reconciles a failed frozen publication and refuses retries outside failed state", () => {
     const failed = run([...proposed, publishFailed("permanent")]).state;
     const retried = decide(failed, Events.Retry.make({ expectedRevision: failed.revision }), now);

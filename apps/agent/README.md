@@ -208,6 +208,19 @@ If retry had not committed, the session remains failed and needs the retry comma
 The watcher still leaves settled terminal sessions alone. Use `pnpm status
 --issue 11` to inspect the result. See [retry design](../../docs/design/local-retry.md).
 
+### Repair a failing PR locally
+
+```sh
+pnpm repair --issue 123 --check 'pnpm test'
+```
+
+Use a published Caldero session with an open PR from the configured App and a
+failed GitHub Actions job on its current head. GitHub CLI supplies the job log
+through your login. Caldero runs the supplied local checks and appends one commit
+to the same PR only while the pinned head is current. Resume an interrupted repair
+with the original local runner and the same checks and state directory.
+See [local repair](../../docs/design/local-repair.md).
+
 ### Watch labeled issues locally
 
 ```sh

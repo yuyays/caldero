@@ -12,6 +12,7 @@
     "dev": "vp run --filter \"@caldero/*\" --parallel dev",
     "dev:web": "vp run --filter @caldero/web dev",
     "build": "vp run --filter \"@caldero/*\" build",
+    "repair": "pnpm --filter @caldero/agent repair",
     "retry": "pnpm --filter @caldero/agent retry",
     "status": "pnpm --filter @caldero/agent status",
     "typecheck": "vp run --cache --concurrency-limit 4 --filter \"@caldero/*\" typecheck",

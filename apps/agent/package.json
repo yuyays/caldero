@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "alchemy dev",
     "local": "node src/local-cli.ts",
+    "repair": "node src/local-cli.ts --repair",
     "retry": "node src/local-cli.ts --retry",
     "status": "node src/local-status-cli.ts",
     "typecheck": "effect-tsgo tsc --noEmit",
