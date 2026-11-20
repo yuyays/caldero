@@ -39,7 +39,7 @@ export default defineConfig({
       "effecttsgo/schema-struct-with-tag": "error",
       // Service methods stay functions so each call gets its own Effect.fn span.
       "effecttsgo/lazy-effect": "off",
-      // Branding every Schema class adds ceremony without a starter use case.
+      // Branding every Schema class adds ceremony without a real use case.
       "effecttsgo/schema-class-missing-brand": "off",
       "react/exhaustive-deps": "warn",
       "react/rules-of-hooks": "error",
@@ -86,19 +86,15 @@ export default defineConfig({
     },
     overrides: [
       {
-        files: ["apps/api/src/**/*.ts", "apps/agent/src/**/*.ts", "apps/web/src/**"],
+        files: ["apps/agent/src/**/*.ts", "apps/web/src/**"],
         rules: { "caldero/runtime-boundary": "error" },
       },
       {
         // Entry points and the web adapters that hand Effects to the UI framework.
         files: [
-          "apps/api/src/main.ts",
-          "apps/api/src/http.ts",
           // Pi Durable calls the session host's tasks as Promises.
           "apps/agent/src/session-host.ts",
           "apps/agent/src/SessionDO.ts",
-          "apps/web/src/lib/api-client.ts",
-          "apps/web/src/lib/users.ts",
           "apps/web/src/lib/inbox.ts",
           ...testFiles,
         ],
@@ -114,8 +110,8 @@ export default defineConfig({
         rules: { "effecttsgo/strict-effect-provide": "off" },
       },
       {
-        // API tests run Effects through @effect/vitest, which provides TestClock.
-        files: ["apps/api/src/**"],
+        // Application tests run Effects through @effect/vitest, which provides TestClock.
+        files: ["apps/agent/src/**"],
         rules: { "caldero/test-runtime": "error" },
       },
       {
@@ -128,11 +124,7 @@ export default defineConfig({
       },
       {
         // Domain workflows and contracts parse input at their boundary instead of passing it on.
-        files: [
-          "apps/api/src/services/**/*.ts",
-          "packages/contracts/src/**/*.ts",
-          "packages/domain/src/**/*.ts",
-        ],
+        files: ["packages/contracts/src/**/*.ts", "packages/domain/src/**/*.ts"],
         rules: {
           "anti-slop/no-unknown-parameters": "error",
           "anti-slop/no-unknown-returns": "error",
@@ -166,8 +158,6 @@ export default defineConfig({
       "**/node_modules/**",
       "apps/web/src/routeTree.gen.ts",
       "tools/oxlint/anti-slop/**",
-      // This standalone workspace has a separate install, absent from root CI.
-      "examples/alchemy-railway/**",
     ],
   },
   fmt: {

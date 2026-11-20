@@ -189,7 +189,6 @@ integration and would not replace these runtime responsibilities.
 | [`packages/domain`](../packages/domain)          | Pure session model and transitions                                                           |
 | [`packages/contracts`](../packages/contracts)    | Shared inbox request/response contracts                                                      |
 | [`apps/web`](../apps/web)                        | React inbox for the Worker backend                                                           |
-| [`apps/api`](../apps/api)                        | Separate Node/PostgreSQL starter API; not agent state or a requirement for local runs        |
 | [`design/milestone-1.md`](design/milestone-1.md) | Historical plan and as-built rationale; later designs supersede its old policy/approval flow |
 | [`research`](research)                           | Time-pinned comparisons and experiments, not current implementation status                   |
 

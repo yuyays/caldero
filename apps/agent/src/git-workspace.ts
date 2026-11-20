@@ -45,7 +45,7 @@ export const makeGitWorkspace = Effect.fn("makeGitWorkspace")(function* (options
 }) {
   const github = yield* GitHub;
   const store = yield* WorkspaceStore;
-  // oxlint-disable-next-line starter/runtime-boundary -- Pi ExecutionEnv is a Promise adapter
+  // oxlint-disable-next-line caldero/runtime-boundary -- Pi ExecutionEnv is a Promise adapter
   const run = Effect.runPromiseWith(yield* Effect.context());
   const guarding = yield* Semaphore.make(1);
   const { env, root, checks } = options;

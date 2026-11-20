@@ -20,6 +20,7 @@
     "@earendil-works/pi-coding-agent": "1.5.2",
     "@earendil-works/pi-durable": "1.5.2",
     "@earendil-works/pi-env": "1.5.2",
+    "@effect/platform-node": "catalog:",
     "alchemy": "2.0.0-beta.87",
     "effect": "catalog:",
     "jose": "^6.2.17"

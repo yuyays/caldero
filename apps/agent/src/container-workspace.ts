@@ -16,7 +16,7 @@ export const ContainerWorkspace = {
     Layer.effect(
       Workspace,
       Effect.gen(function* () {
-        // oxlint-disable-next-line starter/runtime-boundary -- ContainerConnection invokes Alchemy start through a Promise
+        // oxlint-disable-next-line caldero/runtime-boundary -- ContainerConnection invokes Alchemy start through a Promise
         const run = Effect.runPromiseWith(yield* Effect.context());
         const connection = yield* Effect.acquireRelease(
           Effect.sync(() => new ContainerConnection(options.container, () => run(options.start))),

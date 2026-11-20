@@ -4,15 +4,12 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./http": "./src/http/index.ts",
     "./inbox": "./src/http/inbox.ts",
-    "./local-status": "./src/schemas/local-status.ts",
-    "./schemas/user": "./src/schemas/user.ts"
+    "./local-status": "./src/schemas/local-status.ts"
   },
   "scripts": {
     "typecheck": "effect-tsgo tsc --noEmit",
-    "test": "vp test run"
+    "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
     "@caldero/domain": "workspace:*",

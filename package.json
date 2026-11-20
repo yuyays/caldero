@@ -11,9 +11,7 @@
   "scripts": {
     "dev": "vp run --filter \"@caldero/*\" --parallel dev",
     "dev:web": "vp run --filter @caldero/web dev",
-    "dev:api": "vp run --filter @caldero/api dev",
     "build": "vp run --filter \"@caldero/*\" build",
-    "start:api": "vp run @caldero/api#start",
     "retry": "pnpm --filter @caldero/agent retry",
     "status": "pnpm --filter @caldero/agent status",
     "typecheck": "vp run --cache --concurrency-limit 4 --filter \"@caldero/*\" typecheck",
@@ -22,10 +20,7 @@
     "browser:install": "vp run --filter \"@caldero/*\" browser:install",
     "lint": "vp lint .",
     "format:check": "vp fmt . --check",
-    "prepare": "effect-tsgo patch --typescript --oxlint",
-    "db:generate": "vp run @caldero/api#db:generate",
-    "db:migrate": "vp run @caldero/api#db:migrate",
-    "db:studio": "vp run @caldero/api#db:studio"
+    "prepare": "effect-tsgo patch --typescript --oxlint"
   },
   "devDependencies": {
     "@effect/tsgo": "0.69.0",

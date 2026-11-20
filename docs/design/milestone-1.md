@@ -20,7 +20,7 @@ Built on the spike's verdict ([spike-pi-do-container.md](../research/spike-pi-do
 interface, seam, adapter, depth.
 
 **Out of scope:** Slack, cron, CI and review follow-ups as new runs, multiple users, ChatGPT sign-in, the audience
-model, a scheduler, preview environments, and deleting `apps/api` (a separate cleanup).
+model, a scheduler, preview environments, and deleting `apps/api` (later done).
 
 ## Shape
 
@@ -175,7 +175,7 @@ secret in deployment). The per-owner `ModelAccess` seam arrives with ChatGPT sig
 ## Repository changes
 
 - Add `packages/domain` (pure Effect, no Cloudflare imports) and `apps/agent` (Alchemy Worker, `SessionDO`,
-  `Sandbox` container, adapters). Extend the `starter/runtime-boundary` lint override to `apps/agent`.
+  `Sandbox` container, adapters). Extend the `caldero/runtime-boundary` lint override to `apps/agent`.
 - `apps/web` becomes the inbox, served as static assets by the Worker.
 - Promote the spike's `ContainerConnection` into `apps/agent`, with typed Effect errors at the Pi boundary.
 

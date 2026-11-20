@@ -32,7 +32,7 @@ function run(binary, args) {
 }
 
 // The compiler test writes its own throwaway project; lint fixtures are collected below.
-async function fixture(t, location = "apps/api/src") {
+async function fixture(t, location = "apps/agent/src") {
   const directory = await mkdtemp(join(root, location, "policy-fixture-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   return directory;
@@ -139,8 +139,8 @@ after(async () => {
   );
 });
 
-void test("API compiler rejects Effect mistakes independently of the TypeScript patch", async (t) => {
-  const directory = await fixture(t, "apps/api");
+void test("The compiler rejects Effect mistakes independently of the TypeScript patch", async (t) => {
+  const directory = await fixture(t, "apps/agent");
   const config = join(directory, "tsconfig.json");
   await writeFile(config, JSON.stringify({ extends: "../tsconfig.json", include: ["*.ts"] }));
   await writeFile(
@@ -238,7 +238,7 @@ const runtimeCases = [
     true,
   ],
 ];
-fixtureSet("runtime-boundaries", "apps/api/src", Object.fromEntries(runtimeCases));
+fixtureSet("runtime-boundaries", "apps/agent/src", Object.fromEntries(runtimeCases));
 
 void test("lint restricts imported runtimes while allowing adapters and unrelated methods", () => {
   const codes = codesFor("runtime-boundaries");
@@ -247,7 +247,7 @@ void test("lint restricts imported runtimes while allowing adapters and unrelate
   }
 });
 
-fixtureSet("typed-failures", "apps/api/src", {
+fixtureSet("typed-failures", "apps/agent/src", {
   "catch.ts": `import { Effect } from "effect";
 declare const program: Effect.Effect<number, { readonly _tag: "NotFound" }>;
 export const recovered = program.pipe(
@@ -295,8 +295,8 @@ const boundaryFiles = {
   "parameter.ts": "export function handle(input: unknown) {\n  return String(input);\n}\n",
   "dictionary.ts": "export type Metadata = Record<string, unknown>;\n",
 };
-fixtureSet("service-boundaries", "apps/api/src/services", boundaryFiles);
-fixtureSet("app-boundaries", "apps/api/src", boundaryFiles);
+fixtureSet("service-boundaries", "packages/contracts/src", boundaryFiles);
+fixtureSet("app-boundaries", "apps/agent/src", boundaryFiles);
 
 void test("lint requires parsed boundaries only in domain workflows", () => {
   assertRules(codesFor("service-boundaries"), {
@@ -311,7 +311,7 @@ void test("lint requires parsed boundaries only in domain workflows", () => {
 
 const schema =
   'import { Schema } from "effect";\nconst User = Schema.Struct({ name: Schema.String });\n';
-fixtureSet("schema-compile-scope", "apps/api/src", {
+fixtureSet("schema-compile-scope", "apps/agent/src", {
   "inline.ts": `${schema}export const decode = (input: string) => Schema.decodeUnknownSync(User)(input);\n`,
   "hoisted.ts": `${schema}const decodeUser = Schema.decodeUnknownSync(User);\nexport const decode = (input: string) => decodeUser(input);\n`,
   "aliased.ts": `import * as S from "effect/Schema";\nconst User = S.Struct({ name: S.String });\nexport const decode = (input: string) => S.decodeUnknownSync(User)(input);\n`,
@@ -339,9 +339,9 @@ void test("lint hoists Schema compilers out of function bodies", () => {
   });
 });
 
-fixtureSet("test-seams", "apps/api/src", {
-  "vite-plus.test.ts": 'import { vi } from "vite-plus/test";\nvi.mock("./users.js");\n',
-  "effect-vitest.test.ts": 'import { vi } from "@effect/vitest";\nvi.doMock("./users.js");\n',
+fixtureSet("test-seams", "apps/agent/src", {
+  "vite-plus.test.ts": 'import { vi } from "vite-plus/test";\nvi.mock("./session.js");\n',
+  "effect-vitest.test.ts": 'import { vi } from "@effect/vitest";\nvi.doMock("./session.js");\n',
   "runtime.test.ts":
     'import { Effect } from "effect";\nexport const value = Effect.runSync(Effect.succeed(1));\n',
   "managed.test.ts":
@@ -373,10 +373,10 @@ void test("lint keeps tests on real seams, Effect test runners, and controlled c
 
 const webRuntimeSource =
   'import { Effect } from "effect";\nexport const load = () => Effect.runPromise(Effect.succeed(1));\n';
-fixtureSet("web-runtime", "apps/web/src", { "users-panel.ts": webRuntimeSource }, skipWithoutWeb);
+fixtureSet("web-runtime", "apps/web/src", { "panel.ts": webRuntimeSource }, skipWithoutWeb);
 
 void test("lint keeps web Effect runtimes in the client adapters", { skip: skipWithoutWeb }, () => {
-  assertRules(codesFor("web-runtime"), { "users-panel.ts": ["caldero(runtime-boundary)"] });
+  assertRules(codesFor("web-runtime"), { "panel.ts": ["caldero(runtime-boundary)"] });
 });
 
 const webTestSource =
@@ -420,7 +420,7 @@ const timerCases = {
   "live.integration.test.ts":
     'import { setTimeout as sleep } from "node:timers/promises";\nexport const wait = () => sleep(50);\n',
 };
-fixtureSet("timer-waits", "apps/api/src", timerCases);
+fixtureSet("timer-waits", "apps/agent/src", timerCases);
 fixtureSet("tooling-timers", "tools", { "wait.test.js": timerCases["alias.test.ts"] });
 
 void test("lint rejects direct timer waits in unit tests without banning event signals", () => {
@@ -490,24 +490,24 @@ void test("lint lets tooling tests read the clock", () => {
   assertRules(codesFor("tooling-clock"), { "timing.test.js": [] });
 });
 
-// Generated projects rename the workspace scope, so read the names once for the fixtures
-// below instead of per test.
-const apiName = packageName("apps/api");
+// Read the workspace names once so the fixtures below follow renamed packages.
+const agentName = packageName("apps/agent");
 const contractsName = packageName("packages/contracts");
+const domainName = packageName("packages/domain");
 const webName = skipWithoutWeb ? undefined : packageName("apps/web");
 
 fixtureSet(
   "web-contracts",
   "apps/web/src",
   {
-    "relative.ts": 'export { listUsers } from "../../../api/src/services/users.js";\n',
-    "root.ts": 'export { listUsers } from "../../../../apps/api/src/services/users.js";\n',
-    "alias.ts": 'export { listUsers } from "@/../../api/src/services/users.js";\n',
-    "package.ts": `export * from "${apiName}";\n`,
-    "normalized.ts": 'export * from ".././../../api/src/services/users.ts";\n',
-    "dynamic.ts": `export const load = () => import("${apiName}/src/http.ts");\n`,
-    "template.ts": `export const load = () => import(\`${apiName}\`);\n`,
-    "contracts.ts": `export { StarterApi } from "${contractsName}/http";\n`,
+    "relative.ts": 'export { listUsers } from "../../../agent/src/ports.js";\n',
+    "root.ts": 'export { listUsers } from "../../../../apps/agent/src/ports.js";\n',
+    "alias.ts": 'export { listUsers } from "@/../../agent/src/ports.js";\n',
+    "package.ts": `export * from "${agentName}";\n`,
+    "normalized.ts": 'export * from ".././../../agent/src/ports.ts";\n',
+    "dynamic.ts": `export const load = () => import("${agentName}/src/ports.ts");\n`,
+    "template.ts": `export const load = () => import(\`${agentName}\`);\n`,
+    "contracts.ts": `export { InboxApi } from "${contractsName}/inbox";\n`,
   },
   skipWithoutWeb,
 );
@@ -532,12 +532,12 @@ void test(
 fixtureSet(
   "web-config",
   "apps/web",
-  { "config.ts": `export * from "${apiName}";\n` },
+  { "config.ts": `export * from "${agentName}";\n` },
   skipWithoutWeb,
 );
 fixtureSet(
-  "api-web-import",
-  "apps/api/src",
+  "app-web-import",
+  "apps/agent/src",
   { "web.ts": `export * from "${webName}";\n` },
   skipWithoutWeb,
 );
@@ -549,7 +549,7 @@ void test(
     assertRules(codesFor("web-config"), {
       "config.ts": ["caldero(workspace-imports)"],
     });
-    assertRules(codesFor("api-web-import"), {
+    assertRules(codesFor("app-web-import"), {
       "web.ts": ["caldero(workspace-imports)"],
     });
   },
@@ -561,8 +561,8 @@ fixtureSet(
   "vue-imports",
   "apps/web/src",
   {
-    "private.vue": vueComponent(apiName),
-    "public.vue": vueComponent(`${contractsName}/http`),
+    "private.vue": vueComponent(agentName),
+    "public.vue": vueComponent(`${contractsName}/inbox`),
   },
   skipWithoutVue,
 );
@@ -579,12 +579,12 @@ void test(
 );
 
 fixtureSet("contracts-independence", "packages/contracts/src", {
-  "app.ts": `export * from "${apiName}";\n`,
-  "relative.ts": 'export * from "../../../../apps/api/src/db/database.ts";\n',
-  "dynamic.ts": `export const load = () => import("${apiName}/src/http.ts");\n`,
-  "import-type.ts": `export type App = typeof import("${apiName}");\n`,
-  "require.ts": `export const app = require("${apiName}");\n`,
-  "local.ts": 'export { UsersResponse } from "../schemas/user.ts";\n',
+  "app.ts": `export * from "${agentName}";\n`,
+  "relative.ts": 'export * from "../../../../apps/agent/src/ports.ts";\n',
+  "dynamic.ts": `export const load = () => import("${agentName}/src/ports.ts");\n`,
+  "import-type.ts": `export type App = typeof import("${agentName}");\n`,
+  "require.ts": `export const app = require("${agentName}");\n`,
+  "local.ts": 'export { InboxApi } from "../http/inbox.ts";\n',
 });
 
 void test("lint keeps contracts independent of applications", () => {
@@ -598,14 +598,14 @@ void test("lint keeps contracts independent of applications", () => {
   });
 });
 
-fixtureSet("public-exports", "apps/api/src", {
-  "public.ts": `export { StarterApi } from "${contractsName}/http";\n`,
-  "root.ts": `export { StarterApi } from "${contractsName}";\n`,
-  "private.ts": `export { StarterApi } from "${contractsName}/src/http/index.ts";\n`,
-  "type.ts": `export type { User } from "${contractsName}/src/schemas/user.ts";\n`,
-  "relative.ts": 'export * from "../../../../packages/contracts/src/http/index.ts";\n',
-  "normalized.ts": 'export * from ".././../../../packages/contracts/src/http/index.ts";\n',
-  "local.ts": 'export { Database } from "../db/database.ts";\n',
+fixtureSet("public-exports", "apps/agent/src", {
+  "public.ts": `export { InboxApi } from "${contractsName}/inbox";\n`,
+  "root.ts": `export { Events } from "${domainName}";\n`,
+  "private.ts": `export { InboxApi } from "${contractsName}/src/http/inbox.ts";\n`,
+  "type.ts": `export type { SessionView } from "${contractsName}/src/http/inbox.ts";\n`,
+  "relative.ts": 'export * from "../../../../packages/contracts/src/http/inbox.ts";\n',
+  "normalized.ts": 'export * from ".././../../../packages/contracts/src/http/inbox.ts";\n',
+  "local.ts": 'export { GitHub } from "../ports.ts";\n',
 });
 
 void test("lint requires public package exports across workspaces", () => {
@@ -620,7 +620,7 @@ void test("lint requires public package exports across workspaces", () => {
   });
 });
 
-// `starter/workspace-imports` reads workspace manifests when lint starts, so these
+// `caldero/workspace-imports` reads workspace manifests when lint starts, so these
 // fixture packages exist before the shared lint pass runs.
 fixtureSet("policy-empty-package", "packages", {
   "package.json": JSON.stringify({ name: "@policy/empty", exports: {} }),
@@ -636,7 +636,7 @@ fixtureSet("policy-library-package", "packages", {
     },
   }),
 });
-fixtureSet("export-maps", "apps/api/src", {
+fixtureSet("export-maps", "apps/agent/src", {
   "empty.ts": 'export * from "@policy/empty";\n',
   "conditional.ts": 'export * from "@policy/library";\n',
   "pattern.ts": 'export * from "@policy/library/users";\n',
@@ -654,7 +654,7 @@ void test("lint respects empty export maps, conditional roots, and private patte
   });
 });
 
-fixtureSet("suppressions", "apps/api/src", {
+fixtureSet("suppressions", "apps/agent/src", {
   "bare.ts": "// eslint-disable-next-line no-debugger\ndebugger;",
   "explained.ts":
     "// eslint-disable-next-line no-debugger -- The fixture tests a debugger statement.\ndebugger;",

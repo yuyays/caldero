@@ -187,7 +187,7 @@ const command = Effect.gen(function* () {
   });
 });
 
-// oxlint-disable-next-line starter/runtime-boundary -- Node status entrypoint owns its single Effect runtime
+// oxlint-disable-next-line caldero/runtime-boundary -- Node status entrypoint owns its single Effect runtime
 await Effect.runPromise(
   command.pipe(
     Effect.catch((error) =>
