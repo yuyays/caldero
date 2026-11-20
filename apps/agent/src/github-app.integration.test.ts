@@ -63,6 +63,62 @@ const json = (response: ServerResponse, value: unknown, status = 200) => {
 };
 
 describe("GitHub repair publication", () => {
+  it.effect("admits only open, same-repository pull requests authored by the configured App", () =>
+    Effect.gen(function* () {
+      const pr = {
+        number: 101,
+        html_url: "https://github.test/acme/app/pull/101",
+        state: "open",
+        merged: false,
+        user: { login: "repair-fixture[bot]", type: "Bot" },
+        head: { sha: "pr-head", ref: "caldero/7-v1", repo: { full_name: "acme/app" } },
+        base: { ref: "main" },
+      };
+      let remote = pr;
+      const http = yield* peer((request, response) => {
+        switch (request.url) {
+          case "/app/installations/42/access_tokens":
+            request.resume();
+            return json(response, { token: "token" });
+          case "/app":
+            return json(response, { slug: "repair-fixture" });
+          case "/repos/acme/app/pulls/101":
+            return json(response, remote);
+          default:
+            return json(response, {}, 404);
+        }
+      });
+      const github = yield* GitHubApp.make({
+        appId: "1",
+        installationId: 42,
+        privateKey,
+        repo,
+        author: { name: "bot", email: "bot@example.test" },
+        apiUrl: http.url,
+      });
+      expect(yield* github.readRepairTarget(101)).toMatchObject({
+        number: 101,
+        headSha: "pr-head",
+      });
+      for (const [fixture, message] of [
+        [{ ...pr, state: "closed" }, "open pull request"],
+        [{ ...pr, state: "closed", merged: true }, "open pull request"],
+        [{ ...pr, head: { ...pr.head, repo: { full_name: "fork/app" } } }, "configured repository"],
+        [
+          { ...pr, user: { login: pr.user.login, type: "User" } },
+          "opened by the configured GitHub App",
+        ],
+        [
+          { ...pr, user: { ...pr.user, login: "other[bot]" } },
+          "opened by the configured GitHub App",
+        ],
+      ] as const) {
+        remote = fixture;
+        expect((yield* github.readRepairTarget(101).pipe(Effect.flip)).message).toContain(message);
+      }
+    }),
+  );
+
   for (const outcome of ["success", "lost response", "concurrent push"] as const) {
     it.effect(`appends at most one checked commit on the existing PR after ${outcome}`, () =>
       Effect.gen(function* () {
@@ -135,6 +191,19 @@ describe("GitHub repair publication", () => {
         const target = yield* github.readRepairTarget(101);
         const repair = { ...binding, baseSha: target.headSha, version: 2, repair: target };
         const repairPatch = { ...patch, files: patch.files.slice(0, 2) };
+        if (outcome === "success") {
+          for (const invalid of [
+            patch,
+            { ...repairPatch, diff: "old mode 100755\nnew mode 100644" },
+          ]) {
+            expect(
+              yield* github.publish(7, repair, invalid, journal).pipe(Effect.flip),
+            ).toMatchObject({
+              kind: "permanent",
+            });
+          }
+          expect(writes).toBe(0);
+        }
         const attempted = yield* github
           .publish(7, repair, repairPatch, journal)
           .pipe(Effect.result);

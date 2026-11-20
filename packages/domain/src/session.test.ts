@@ -52,6 +52,7 @@ describe("decide", () => {
     const first = decide(published, repair, now);
     expect(first.state).toMatchObject({ status: "running", runId: 2, baseSha: "pr-head" });
     expect(decide(first.state, repair, now).result).toBe("stale");
+    expect(decide(first.state, input("Start another edit"), now).result).toBe("stale");
     for (const failure of [
       run([Events.RunFailed.make({ runId: 2, reason: "model stopped" })], first.state),
       run(
@@ -61,12 +62,26 @@ describe("decide", () => {
     ]) {
       expect(failure.state).toMatchObject({ status: "failed", runId: 2, candidate: null });
       expect(failure.instructions).toMatchObject([{ _tag: "Project" }]);
+      expect(
+        decide(failure.state, Events.Retry.make({ expectedRevision: failure.state.revision }), now)
+          .result,
+      ).toBe("stale");
     }
     const checked = run([answered(2), validated(2, "sha256:repair")], first.state);
     expect(checked.instructions[0]).toMatchObject({
       _tag: "Publish",
       binding: { baseSha: "pr-head", repair: target, patchDigest: "sha256:repair" },
     });
+    const failedPublish = decide(checked.state, publishFailed("permanent"), now).state;
+    const retry = decide(
+      failedPublish,
+      Events.Retry.make({ expectedRevision: failedPublish.revision }),
+      now,
+    );
+    expect(retry.instructions).toMatchObject([
+      { _tag: "Reconcile", binding: { repair: target } },
+      { _tag: "Project" },
+    ]);
     expect(
       decide(checked.state, Events.PublishSucceeded.make(pr), now).instructions[0],
     ).toMatchObject({

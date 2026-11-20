@@ -116,7 +116,7 @@ export type Instruction = typeof Instruction.Type;
 /** `applied` changed the session; `duplicate` repeats what already happened; `stale` was refused. */
 export type DecisionResult = "applied" | "duplicate" | "stale";
 
-/** Consecutive failures of one phase (run and validation, or publishing) before the session fails. */
+/** Failure limit for ordinary runs and publication. An explicit repair gets one edit run. */
 const attemptLimit = 3;
 
 export interface Decision {
@@ -199,7 +199,7 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
     );
   };
 
-  /** Starts the next run after a failure, or fails the session once the attempts are used up. */
+  /** Retry ordinary runs within budget. Repair finishes after its first run or check failure. */
   const retryRun = (text: string, failure: string): Decision => {
     const attempts = state.attempts + 1;
     if (state.repair || attempts >= attemptLimit)

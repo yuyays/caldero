@@ -63,8 +63,10 @@ flowchart LR
   execution environment. Coding tools checkpoint after write, edit and bash.
 - **Publication:** [`github-app.ts`](../apps/agent/src/github-app.ts) keeps App
   credentials on the host and journals Git objects, branch and PR receipts.
-  It creates branches without overwriting existing refs. Remote calls are
-  idempotent or reconciled; there is no transaction spanning SQLite and GitHub.
+  Initial publication creates a new ref. Explicit repair can append one checked
+  commit to a saved open App-authored PR in the same repository using GitHub's
+  expected-head condition. Remote calls are idempotent or reconciled across
+  SQLite and GitHub. See [local repair](design/local-repair.md).
 
 The current lifecycle is `idle → running → validating → publishing → published`,
 with bounded failure paths and cancellation before publication. Failed and

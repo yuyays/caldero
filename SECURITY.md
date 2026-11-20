@@ -33,9 +33,14 @@ Please check these before reporting; some apparent issues are deliberate boundar
 - **App credentials stay on the host.** Workspaces, checkpoints and snapshots are
   secret-free. Installation tokens are minted per operation with repository-scoped
   Contents, Pull requests and Issues write permission.
-- **Publishing never overwrites.** Branches are created without replacing existing
-  refs, and refs are never force-updated. An ambiguous result is reconciled against
-  the journal.
+- **Branch writes are constrained.** Initial publication creates a new ref. Explicit
+  local repair can append one validated commit to a saved open PR authored by the
+  configured App, with a head branch in the same repository. GitHub checks the
+  expected head as part of the append. Refs are never force-updated. An ambiguous
+  result is reconciled against the journal.
+- **CI logs are model input.** Local repair passes a bounded log excerpt to Pi as
+  untrusted data. The local runner has the operator's filesystem and network access.
+  Use it only for repositories whose CI output you trust with that access.
 - **Inbox authorization is Access-only.** Requests require a verified Access JWT:
   signature, issuer, audience, expiry and not-before. The JWKS is derived from the
   configured issuer, so token-supplied `jku`/`x5u` are never used. The email header
