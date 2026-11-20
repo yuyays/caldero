@@ -108,11 +108,14 @@ export const makeGitWorkspace = Effect.fn("makeGitWorkspace")(function* (options
   const prepare = Effect.fn("GitWorkspace.prepare")(function* (
     repo: { readonly owner: string; readonly name: string },
     baseSha: string,
+    reset = false,
   ) {
-    if ((yield* exists(marker)) && (yield* readText(marker)).trim() === baseSha) return;
+    if (!reset && (yield* exists(marker)) && (yield* readText(marker)).trim() === baseSha) return;
     const files = yield* github
       .fetchSource(repo, baseSha)
       .pipe(Effect.mapError((error) => new WorkspaceError({ message: error.message })));
+    // Invalidate the old receipt before touching the worktree, including a same-base reset.
+    yield* exec(["rm", "-f", marker], root);
     yield* exec(["rm", "-rf", work], root);
     yield* exec(["mkdir", "-p", work], root);
     for (const file of files) {

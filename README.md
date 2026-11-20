@@ -11,13 +11,14 @@ issue labeled "agent" ──► session ──► change ──► validate ─�
 
 The model cannot declare its own work valid: only the workspace's check result
 starts publication. Caldero never merges, never force-updates a branch, and never
-overwrites an existing ref.
+overwrites an existing ref during initial publication. Explicit CI repair can
+append one checked commit to the existing PR branch.
 
 ## Status
 
 Alpha. The local path is exercised end to end; the Cloudflare path is implemented but
-has never been validated as a deployment. Slack, cron, a scheduler and CI repair do not
-exist. The [full status table](docs/architecture.md#implementation-and-deployment-status)
+has never been validated as a deployment. Slack, cron, a scheduler and automatic CI
+repair are future work. The [full status table](docs/architecture.md#implementation-and-deployment-status)
 tracks each piece and says what is unbuilt.
 
 ## Requirements
@@ -71,11 +72,14 @@ issue and stops admitting new ones.
 pnpm status                     # saved phases, evidence, failures, PRs
 pnpm status --issue 123 --ci    # add real check results from the PR's current head
 pnpm retry --issue 123 --check 'pnpm test'
+pnpm repair --issue 123 --check 'pnpm test'
 ```
 
 `pnpm status` reads saved state and lock ownership only. It opens no session, loads
 no credentials, and does not prove a worker is alive. `pnpm retry` is an explicit
 action for failed sessions; rerunning `local` only resumes non-terminal work.
+Repair needs a published Caldero session with a failing GitHub Actions job on
+the current PR head and a signed-in GitHub CLI. See [repair behavior](docs/design/local-repair.md).
 
 ## Cloudflare development
 

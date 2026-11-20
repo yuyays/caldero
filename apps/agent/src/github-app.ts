@@ -1,5 +1,5 @@
-import { createPrivateKey, sign } from "node:crypto";
-import type { ApprovalBinding, Repo } from "@caldero/domain";
+import { createPrivateKey, randomUUID, sign } from "node:crypto";
+import type { ApprovalBinding, RepairTarget, Repo } from "@caldero/domain";
 import { Clock, DateTime, Effect, Layer, Result, Schema } from "effect";
 import { Base64 } from "effect/encoding";
 import {
@@ -60,6 +60,39 @@ const prSchema = Schema.Struct({
   base: Schema.Struct({ ref: Schema.String }),
 });
 const prResponse = Schema.decodeUnknownEffect(prSchema);
+const repairPrResponse = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    ...prSchema.fields,
+    state: Schema.String,
+    merged: Schema.Boolean,
+    head: Schema.Struct({
+      ...prSchema.fields.head.fields,
+      repo: Schema.NullOr(Schema.Struct({ full_name: Schema.String })),
+    }),
+    user: Schema.Struct({ login: Schema.String, type: Schema.String }),
+  }),
+);
+const appResponse = Schema.decodeUnknownEffect(Schema.Struct({ slug: Schema.String }));
+const repairCommitResponse = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    message: Schema.String,
+    parents: Schema.Array(Schema.Struct({ sha: Schema.String })),
+  }),
+);
+const appendedCommit = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    data: Schema.Struct({
+      createCommitOnBranch: Schema.Struct({
+        commit: Schema.Struct({ oid: Schema.String }),
+      }),
+    }),
+  }),
+);
+const appendCommitMutation = `
+  mutation($input: CreateCommitOnBranchInput!) {
+    createCommitOnBranch(input: $input) { commit { oid } }
+  }
+`;
 const prsResponse = Schema.decodeUnknownEffect(Schema.Array(prSchema));
 const repoResponse = Schema.decodeUnknownEffect(Schema.Struct({ default_branch: Schema.String }));
 const issueResponse = Schema.decodeUnknownEffect(
@@ -98,6 +131,7 @@ const bindingKey = (binding: ApprovalBinding) =>
     binding.baseRef,
     binding.baseSha,
     binding.patchDigest,
+    binding.repair ?? null,
   ]);
 const validPath = (path: string) =>
   !path.includes("\\") &&
@@ -185,22 +219,25 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
   });
   const root = (options.apiUrl ?? "https://api.github.com").replace(/\/$/, "");
   const prefix = `/repos/${segment(options.repo.owner)}/${segment(options.repo.name)}`;
+  const appJwt = Effect.fn("GitHubApp.appJwt")(function* () {
+    const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
+    const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+    const payload = Buffer.from(
+      JSON.stringify({ iss: options.appId, iat: now - 60, exp: now + 540 }),
+    ).toString("base64url");
+    return yield* Effect.try({
+      try: () =>
+        `${header}.${payload}.${sign("RSA-SHA256", Buffer.from(`${header}.${payload}`), signingKey).toString("base64url")}`,
+      catch: () => new HttpFailure({ status: 0, message: "Could not sign GitHub App JWT" }),
+    });
+  });
   const client = Effect.fn("GitHubApp.client")(function* (repo: Repo) {
     if (repo.owner !== options.repo.owner || repo.name !== options.repo.name)
       return yield* new HttpFailure({
         status: 403,
         message: "Repository is outside the configured installation scope",
       });
-    const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
-    const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
-    const payload = Buffer.from(
-      JSON.stringify({ iss: options.appId, iat: now - 60, exp: now + 540 }),
-    ).toString("base64url");
-    const jwt = yield* Effect.try({
-      try: () =>
-        `${header}.${payload}.${sign("RSA-SHA256", Buffer.from(`${header}.${payload}`), signingKey).toString("base64url")}`,
-      catch: () => new HttpFailure({ status: 0, message: "Could not sign GitHub App JWT" }),
-    });
+    const jwt = yield* appJwt();
     const data = yield* request(
       root,
       jwt,
@@ -215,7 +252,13 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
         () => new HttpFailure({ status: 0, message: "Invalid installation token response" }),
       ),
     );
-    return (path: string, body?: object) => request(root, token.token, `${prefix}${path}`, body);
+    return Object.assign(
+      (path: string, body?: object) => request(root, token.token, `${prefix}${path}`, body),
+      {
+        graphql: (body: object) =>
+          request(root.replace(/\/api\/v3$/, "/api"), token.token, "/graphql", body),
+      },
+    );
   });
 
   type Api = Effect.Success<ReturnType<typeof client>>;
@@ -267,6 +310,140 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
         message: "Publish journal does not match the validated binding",
       });
     return saved;
+  });
+
+  const readRepairPr = Effect.fn("GitHubApp.readRepairPr")(function* (
+    api: Api,
+    repo: Repo,
+    number: number,
+  ) {
+    const pr = yield* repairPrResponse(yield* api(`/pulls/${number}`));
+    if (
+      pr.number !== number ||
+      pr.state !== "open" ||
+      pr.merged ||
+      pr.head.repo?.full_name.toLowerCase() !== `${repo.owner}/${repo.name}`.toLowerCase()
+    )
+      return yield* new PublishError({
+        kind: "permanent",
+        message: "Repair requires an open pull request with a branch in the configured repository",
+      });
+    const app = yield* appResponse(yield* request(root, yield* appJwt(), "/app"));
+    if (pr.user.type !== "Bot" || pr.user.login.toLowerCase() !== `${app.slug}[bot]`.toLowerCase())
+      return yield* new PublishError({
+        kind: "permanent",
+        message: "This pull request was not opened by the configured GitHub App",
+      });
+    return pr;
+  });
+
+  const inspectRepair = Effect.fn("GitHubApp.inspectRepair")(function* (
+    api: Api,
+    binding: ApprovalBinding,
+    target: RepairTarget,
+    progress: PublishProgress | null,
+  ) {
+    const pr = yield* readRepairPr(api, binding.repo, target.number);
+    if (pr.head.ref !== target.headRef || pr.base.ref !== target.baseRef)
+      return {
+        found: "conflict",
+        message: "Pull request branch or base changed during repair",
+      } as const;
+    const pullRequest = { number: pr.number, url: pr.html_url };
+    if (progress?.commitSha != null)
+      return pr.head.sha === progress.commitSha
+        ? ({ found: "pullRequest", pullRequest } as const)
+        : ({
+            found: "conflict",
+            message: "Pull request head moved after the saved repair commit",
+          } as const);
+    if (pr.head.sha === target.headSha) return { found: "nothing", pullRequest } as const;
+    if (progress !== null) {
+      const head = yield* repairCommitResponse(yield* api(`/git/commits/${segment(pr.head.sha)}`));
+      if (
+        head.message.trimEnd() === progress.message &&
+        head.parents.length === 1 &&
+        head.parents[0]?.sha === target.headSha
+      )
+        return { found: "pullRequest", pullRequest } as const;
+    }
+    return { found: "conflict", message: "Pull request head moved during repair" } as const;
+  });
+
+  /** Append a checked patch with GitHub's expected-head precondition and a durable receipt marker. */
+  const publishRepair = Effect.fn("GitHubApp.publishRepair")(function* (
+    issue: number,
+    binding: ApprovalBinding,
+    target: RepairTarget,
+    patch: Patch,
+    journal: PublishJournal,
+  ) {
+    if (
+      binding.baseSha !== target.headSha ||
+      binding.baseRef !== target.baseRef ||
+      patch.files.some((file) => file.change === "write" && file.executable) ||
+      /^(?:old mode|new mode|new file mode (?!100644$))/m.test(patch.diff)
+    )
+      return yield* new PublishError({
+        kind: "permanent",
+        message: "Repair requires a matching PR head and ordinary file edits without mode changes",
+      });
+    let progress = yield* load(issue, binding, journal);
+    const api = yield* client(binding.repo);
+    const existing = yield* inspectRepair(api, binding, target, progress);
+    if (existing.found === "pullRequest") return existing.pullRequest;
+    if (existing.found === "conflict")
+      return yield* new PublishError({ kind: "permanent", message: existing.message });
+    if (progress === null) {
+      progress = {
+        binding,
+        issue,
+        author: { ...options.author, date: DateTime.formatIso(yield* DateTime.now) },
+        message: `caldero: repair CI for issue #${issue}\n\nCaldero-Repair: ${randomUUID()}`,
+        title: "",
+        body: "",
+        baseTree: null,
+        blobs: null,
+        treeSha: null,
+        commitSha: null,
+        refCreated: false,
+        pullRequest: null,
+      };
+      yield* journal.save(progress);
+    }
+    const commit = yield* appendedCommit(
+      yield* api.graphql({
+        query: appendCommitMutation,
+        variables: {
+          input: {
+            branch: {
+              repositoryNameWithOwner: `${binding.repo.owner}/${binding.repo.name}`,
+              branchName: target.headRef,
+            },
+            expectedHeadOid: target.headSha,
+            message: {
+              headline: progress.message.split("\n")[0],
+              body: progress.message.split("\n\n")[1],
+            },
+            fileChanges: {
+              additions: patch.files.flatMap((file) =>
+                file.change === "write" ? [{ path: file.path, contents: file.content }] : [],
+              ),
+              deletions: patch.files.flatMap((file) =>
+                file.change === "delete" ? [{ path: file.path }] : [],
+              ),
+            },
+          },
+        },
+      }),
+    );
+    const pullRequest = existing.pullRequest;
+    yield* journal.save({
+      ...progress,
+      commitSha: commit.data.createCommitOnBranch.commit.oid,
+      pullRequest,
+    });
+    return pullRequest;
   });
 
   /** Reconcile before creating: even closed PRs count, and an existing branch is never overwritten. */
@@ -435,6 +612,8 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
           kind: "permanent",
           message: "Patch does not match the validated candidate or has invalid paths",
         });
+      if (binding.repair)
+        return yield* publishRepair(issue, binding, binding.repair, patch, journal);
       let progress = yield* load(issue, binding, journal);
       if (progress === null) {
         const date = DateTime.formatIso(yield* DateTime.now);
@@ -547,6 +726,10 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
     reconcile: Effect.fn("GitHubApp.reconcile")(
       function* (issue: number, binding: ApprovalBinding, journal: PublishJournal) {
         const progress = yield* load(issue, binding, journal);
+        if (binding.repair) {
+          const api = yield* client(binding.repo);
+          return yield* inspectRepair(api, binding, binding.repair, progress);
+        }
         if (progress?.commitSha == null) return { found: "nothing" } as const;
         const api = yield* client(binding.repo);
         const remote = yield* readRef(api, branchName(issue, binding));
@@ -577,6 +760,22 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
   });
   return {
     ...github,
+    readRepairTarget: Effect.fn("GitHubApp.readRepairTarget")(
+      function* (number: number) {
+        const pr = yield* readRepairPr(yield* client(options.repo), options.repo, number);
+        return {
+          number,
+          headRef: pr.head.ref,
+          headSha: pr.head.sha,
+          baseRef: pr.base.ref,
+        } satisfies RepairTarget;
+      },
+      Effect.mapError((error) =>
+        error instanceof PublishError
+          ? new GitHubError({ message: error.message })
+          : readError(error),
+      ),
+    ),
     /** Host-only discovery stays outside the session's GitHub port. REST also lists PRs here. */
     listOpenLabeledIssues: Effect.fn("GitHubApp.listOpenLabeledIssues")(
       function* (label: string) {

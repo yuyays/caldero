@@ -12,6 +12,7 @@
     "dev": "vp run --filter \"@caldero/*\" --parallel dev",
     "dev:web": "vp run --filter @caldero/web dev",
     "build": "vp run --filter \"@caldero/*\" build",
+    "repair": "pnpm --filter @caldero/agent repair",
     "retry": "pnpm --filter @caldero/agent retry",
     "status": "pnpm --filter @caldero/agent status",
     "typecheck": "vp run --cache --concurrency-limit 4 --filter \"@caldero/*\" typecheck",
@@ -21,11 +22,10 @@
     "lint": "vp lint .",
     "format": "vp fmt .",
     "format:check": "vp fmt . --check",
-    "prepare": "effect-tsgo patch --typescript --oxlint"
+    "prepare": "effect-tsgo patch --typescript --oxlint --tsrs"
   },
   "devDependencies": {
-    "@effect/tsgo": "0.70.0",
-    "@oxlint/plugins": "1.94.0",
+    "@effect/tsgo": "0.73.2",
     "typescript": "7.0.2",
     "vite-plus": "catalog:"
   },

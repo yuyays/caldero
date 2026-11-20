@@ -146,6 +146,12 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
     doc.seen[eventId] = decision.result;
     if (decision.result !== "applied") return decision.result;
     doc.state = encodeState(decision.state);
+    if (event["_tag"] === "Repair") {
+      // Checkpoints describe edits relative to the previous base, never the PR head.
+      const savedWorkspace = await tx.doc(WorkspaceDoc);
+      savedWorkspace.checkpoint = null;
+      savedWorkspace.bootId = null;
+    }
     for (const instruction of decision.instructions) {
       const id = await tx.createTask(Instructions, instruction, {
         ownership: { kind: "conversation" },
@@ -280,7 +286,7 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
               Effect.exit(
                 state.baseSha === null
                   ? Effect.fail(new WorkspaceError({ message: "the base commit is unknown" }))
-                  : workspace.prepare(state.repo, state.baseSha),
+                  : workspace.prepare(state.repo, state.baseSha, state.repair !== undefined),
               ),
               { signal: runtime.signal },
             );

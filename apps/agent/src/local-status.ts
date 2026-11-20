@@ -60,17 +60,20 @@ export const readLocalSession = Effect.fn("readLocalSession")(function* (
             if (metadata?.version !== CURRENT_SQLITE_SCHEMA_VERSION)
               return { version: metadata?.version, rows: [] };
             const rows = await transaction.all<{
+              docKind: string;
               kind: unknown;
               version: unknown;
               content: unknown;
             }>(
               `
-          SELECT r.kind, r.version, r.content
+          SELECT d.kind AS docKind, r.kind, r.version, r.content
           FROM documents d LEFT JOIN document_revisions r ON r.document_id = d.id
             AND r.seq = (SELECT MAX(seq) FROM document_revisions WHERE document_id = d.id)
-          WHERE d.kind = ? AND d.scope_kind = 'session' AND d.family = 0 AND d.retired_at IS NULL
-          LIMIT 2`,
+          WHERE d.kind IN (?, ?, ?) AND d.scope_kind = 'session' AND d.family = 0 AND d.retired_at IS NULL
+          LIMIT 4`,
               JSON.stringify(SessionDoc.definition.kind),
+              JSON.stringify("puchero.session"),
+              JSON.stringify("metate.session"),
             );
             return { version: metadata.version, rows };
           }),
@@ -81,6 +84,11 @@ export const readLocalSession = Effect.fn("readLocalSession")(function* (
   if (snapshot.version !== CURRENT_SQLITE_SCHEMA_VERSION)
     return yield* new LocalStatusError({
       message: "Unsupported Pi SQLite schema; status did not migrate it",
+    });
+  if (snapshot.rows.some((row) => row.docKind !== JSON.stringify(SessionDoc.definition.kind)))
+    return yield* new LocalStatusError({
+      message:
+        "This database belongs to a pre-rename session. Keep it separate from Caldero state.",
     });
   const revision = snapshot.rows[0];
   if (snapshot.rows.length === 0) return null;

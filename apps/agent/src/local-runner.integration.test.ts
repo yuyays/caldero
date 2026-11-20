@@ -5,6 +5,7 @@ import { watch } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
@@ -14,6 +15,7 @@ import { makeFakeGitHub } from "./fake-github.ts";
 import { openLocalIssue } from "./local-runner.ts";
 import { scriptedModels } from "./testing.ts";
 import { localWatchIssueError } from "./local-watch.ts";
+import { GitHub } from "./ports.ts";
 
 const repo = { owner: "acme", name: "app" };
 const directory = Effect.acquireRelease(
@@ -22,6 +24,115 @@ const directory = Effect.acquireRelease(
 );
 
 describe("Local durable runner", () => {
+  it.effect("refuses a copied pre-rename database before admitting work", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* directory;
+      const github = makeFakeGitHub({ source: [] });
+      const open = () =>
+        openLocalIssue({
+          stateDir,
+          repo,
+          issue: 7,
+          pi: scriptedModels(),
+          checks: ["test -f notes.txt"],
+        }).pipe(Effect.provide(github.layer));
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const host = yield* open();
+          yield* host.drain();
+        }),
+      );
+      const path = join(stateDir, "session.sqlite");
+      // Model a copy from the old brand namespace without changing the saved payload.
+      yield* Effect.acquireUseRelease(
+        Effect.promise(() => openNodeSqliteDatabase(path)),
+        (db) =>
+          Effect.promise(() =>
+            db.run(
+              "UPDATE documents SET kind = ? WHERE kind = ?",
+              JSON.stringify("puchero.session"),
+              JSON.stringify("caldero.session"),
+            ),
+          ),
+        (db) => Effect.promise(() => db.close()),
+      );
+      const failure = yield* Effect.scoped(open()).pipe(Effect.flip);
+      expect(failure.message).toContain("pre-rename");
+      expect(github.state.pullRequests).toHaveLength(1);
+    }),
+  );
+
+  it.effect("repairs from the saved PR head without restoring edits from the old base", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* directory;
+      const fake = makeFakeGitHub({ source: [] });
+      const github = yield* GitHub.pipe(Effect.provide(fake.layer));
+      const pi = scriptedModels();
+      let first = true;
+      pi.control.script = () => {
+        if (!first) return fauxAssistantMessage("Done.");
+        first = false;
+        return fauxAssistantMessage(
+          fauxToolCall("write", { path: "old-only.txt", content: "original" }),
+          { stopReason: "toolUse" },
+        );
+      };
+      const options = { stateDir, repo, issue: 7, pi };
+      const published = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const host = yield* openLocalIssue({ ...options, checks: ["test -f old-only.txt"] }).pipe(
+            Effect.provide(fake.layer),
+          );
+          yield* host.drain();
+          return (yield* host.view()).state;
+        }),
+      );
+      expect(published.status).toBe("published");
+      const fixed = scriptedModels();
+      const repair = Effect.fn("fixture.repair")((number: number) =>
+        Effect.succeed({
+          target: { number, headRef: "caldero/7-v1", headSha: "current-head", baseRef: "main" },
+          context: "Fix the red job",
+        }),
+      );
+      const remote = GitHub.of({
+        ...github,
+        fetchSource: (_repo, sha) =>
+          Effect.succeed(
+            sha === "current-head"
+              ? [{ path: "pr-head.txt", content: Buffer.from("from PR"), executable: false }]
+              : [],
+          ),
+        publish: (_issue, binding, patch) =>
+          Effect.sync(() => {
+            expect(binding.repair).toMatchObject({ number: 100, headSha: "current-head" });
+            expect(patch.files.map((file) => file.path)).toEqual(["notes.txt"]);
+            return { number: 100, url: "https://github.test/pull/100" };
+          }),
+      });
+      const repaired = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const host = yield* openLocalIssue({
+            ...options,
+            pi: fixed,
+            repair,
+            checks: [
+              "test -f pr-head.txt && test ! -e old-only.txt && grep -q 'Fix the red job' notes.txt",
+            ],
+          }).pipe(Effect.provideService(GitHub, remote));
+          yield* host.drain();
+          return (yield* host.view()).state;
+        }),
+      );
+      expect(repaired).toMatchObject({
+        status: "published",
+        version: 2,
+        pullRequest: published.pullRequest,
+      });
+      expect(fake.state.pullRequests).toHaveLength(1);
+    }),
+  );
+
   it.effect("rejects incompatible retry arguments before loading Pi or GitHub credentials", () =>
     Effect.gen(function* () {
       const root = yield* directory;
