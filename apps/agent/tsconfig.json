@@ -11,7 +11,7 @@
         "includeSuggestionsInTsc": false,
         "ignoreEffectWarningsInTscExitCode": true,
         "ignoreEffectErrorsInTscExitCode": false,
-        "allowedUnstableApis": ["@effect/vitest"],
+        "allowedUnstableApis": ["effect/http", "effect/http-api", "@effect/vitest"],
         "effectFn": ["inferred-span", "suggested-span"],
         "diagnosticSeverity": {
           "floatingEffect": "error",
