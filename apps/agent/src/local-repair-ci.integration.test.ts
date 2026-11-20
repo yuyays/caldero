@@ -36,14 +36,18 @@ describe("Repair CI admission", () => {
               'case "$*" in',
               '  "api graphql --hostname github.com "*) cat rollup.json ;;',
               `  "api --hostname github.com ${endpoint}") cat job.json ;;`,
-              `  "api --hostname github.com ${endpoint}/logs") echo read >> requests; printf "Assertion failed: expected 2, got 3\\n" ;;`,
+              `  "api --hostname github.com --allow-escape-sequences ${endpoint}/logs")`,
+              "    echo read >> requests",
+              "    printf 'old-prefix\\n'",
+              "    head -c 2250000 /dev/zero | tr '\\000' x",
+              "    printf '\\n\\033[31mAssertion failed: expected 2, got 3\\033[0m\\n' ;;",
               "  *) exit 1 ;;",
               "esac",
             ].join("\n"),
             { mode: 0o700 },
           ),
         );
-        const rollup = (state: string) =>
+        const rollup = (state: string, conclusion = state) =>
           Effect.promise(() =>
             writeFile(
               join(root, "rollup.json"),
@@ -67,7 +71,7 @@ describe("Repair CI admission", () => {
                                     {
                                       kind: "CheckRun",
                                       status: "COMPLETED",
-                                      conclusion: state,
+                                      conclusion,
                                       name: "unit",
                                       startedAt: "2026-11-21T02:00:00Z",
                                       checkSuite: null,
@@ -106,12 +110,16 @@ describe("Repair CI admission", () => {
             { number: 5, headRef: "caldero/3-v1", headSha: sha, baseRef: "main" },
           );
         yield* rollup("SUCCESS");
-        expect((yield* read().pipe(Effect.flip)).message).toContain("failing CI");
-        yield* rollup("FAILURE");
+        expect((yield* read().pipe(Effect.flip)).message).toContain("No current failed");
+        yield* rollup("PENDING", "FAILURE");
         yield* job("b".repeat(40));
         expect((yield* read().pipe(Effect.flip)).message).toContain("No current failed");
         yield* job(sha);
-        expect(yield* read()).toContain("expected 2, got 3");
+        const context = yield* read();
+        expect(context).toContain("expected 2, got 3");
+        expect(context).not.toContain("old-prefix");
+        expect(context).not.toContain("\\u001b");
+        expect(context.length).toBeLessThan(9000);
         expect(yield* Effect.promise(() => readFile(join(root, "requests"), "utf8"))).toBe(
           "read\n",
         );

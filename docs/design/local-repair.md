@@ -13,7 +13,9 @@ to write, and the operator's signed-in GitHub CLI to read Actions logs.
 - Require a current failing GitHub Actions job for that exact head on github.com.
   Read a bounded excerpt of one job's logs as diagnostic data. Fix work starts
   only after admission succeeds. Checks are supplied explicitly just as for
-  the initial issue run.
+  the initial issue run. Logs can contain text from tests and dependencies.
+  Use local repair only for repositories whose CI output you trust with the
+  operator's filesystem and network access.
 - The repair event records the PR number, branch, base ref and head SHA. The
   workspace starts from the PR head and drops the previous base's checkpoint.
   One edit run can nominate one frozen patch. A failed run, a failed local
