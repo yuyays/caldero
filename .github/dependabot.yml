@@ -45,8 +45,9 @@ updates:
       toolchain:
         patterns:
           - "typescript"
+          # Must stay mutually supported: vite-plus 1.7 lints type-aware with
+          # its bundled tsrs, which needs the matching @effect/tsgo patch.
           - "@effect/tsgo"
-          - "@oxlint/plugins"
           - "vite-plus"
           - "vite"
           - "vitest"
