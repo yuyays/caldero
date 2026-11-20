@@ -15,16 +15,10 @@ overwrites an existing ref.
 
 ## Status
 
-Alpha. The local path is the one exercised end to end; the Cloudflare path is
-implemented but has not been validated as a deployment.
-
-| Path                                             | Status                                                          |
-| ------------------------------------------------ | --------------------------------------------------------------- |
-| Local issue runner and label watcher             | Implemented, run end to end with a real Pi login and GitHub App |
-| `pnpm status` (read-only session inspection)     | Implemented; optional GitHub CI lookup on the saved PR          |
-| Cloudflare Worker, Durable Object, Container, R2 | Implemented; exercised in local development only                |
-| React inbox                                      | Reads the Worker path, not local SQLite sessions                |
-| Slack, cron, scheduler, CI repair                | Not built                                                       |
+Alpha. The local path is exercised end to end; the Cloudflare path is implemented but
+has never been validated as a deployment. Slack, cron, a scheduler and CI repair do not
+exist. The [full status table](docs/architecture.md#implementation-and-deployment-status)
+tracks each piece and says what is unbuilt.
 
 ## Requirements
 
@@ -97,20 +91,13 @@ fixtures, not credentials: dev mode uses faux models and a fake GitHub, and no
 command deploys resources. Production configuration is a separate set of bindings,
 documented in the [agent guide](apps/agent/README.md#production-configuration-no-deployment-performed).
 
-## Repository layout
+## Layout
 
-```
-apps/agent      shared session host, local runner/watcher, Cloudflare adapters
-apps/web        React inbox for the Worker backend
-packages/domain     pure session model and transitions
-packages/contracts  shared request/response schemas
-docs/           architecture, designs, and time-pinned research
-tools/          lint rules and the tests that prove they fire
-```
-
-[`docs/architecture.md`](docs/architecture.md) is the map: shared session core, both
-execution paths, storage ownership, and what remains unbuilt. [`PRODUCT.md`](PRODUCT.md)
-describes the inbox.
+`apps/agent` holds the session host plus the local and Cloudflare adapters, `apps/web`
+is the inbox, `packages/domain` is the reducer, and `packages/contracts` holds the wire
+schemas. [`docs/architecture.md`](docs/architecture.md) has the full map — which module
+owns which decision, both execution paths, and what remains unbuilt — and
+[`PRODUCT.md`](PRODUCT.md) describes the inbox.
 
 ## Verify changes
 
@@ -123,12 +110,10 @@ pnpm build
 ```
 
 Browser component tests need a one-time download: `pnpm browser:install`, then
-`pnpm test:browser`.
-
-Expect a demanding toolchain: TypeScript 7, `vite-plus`, and an `@effect/tsgo` patch
-that `pnpm install` applies to `tsc` and `oxlint` through `prepare`. `pnpm test`
-includes tests that lint deliberately invalid examples, which is how the custom rules
-are shown to work rather than merely configured. See [CONTRIBUTING.md](CONTRIBUTING.md).
+`pnpm test:browser`. `pnpm test` also lints deliberately invalid examples, which is how
+the custom rules are shown to work rather than merely configured. The toolchain expects
+TypeScript 7 and `vite-plus`; see [CONTRIBUTING.md](CONTRIBUTING.md#toolchain-rough-edges)
+for the sharp edges.
 
 ## Security
 
