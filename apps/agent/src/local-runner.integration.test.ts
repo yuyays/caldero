@@ -8,7 +8,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Deferred, Effect } from "effect";
 import { Events } from "@caldero/domain";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { makeFakeGitHub } from "./fake-github.ts";
@@ -384,11 +384,11 @@ describe("Local durable runner", () => {
       const stateDir = yield* directory;
       const github = makeFakeGitHub({ source: [] });
       const pi = scriptedModels();
-      const started = Promise.withResolvers<void>();
+      const started = yield* Deferred.make<void>();
       yield* Effect.acquireRelease(
         Effect.sync(() =>
           watch(stateDir, { recursive: true }, (_event, name) => {
-            if (name?.endsWith("started")) started.resolve();
+            if (name?.endsWith("started")) Deferred.doneUnsafe(started, Effect.void);
           }),
         ),
         (watcher) => Effect.sync(() => watcher.close()),
@@ -403,7 +403,7 @@ describe("Local durable runner", () => {
       const host = yield* openLocalIssue({ repo, issue: 7, stateDir, checks: ["true"], pi }).pipe(
         Effect.provide(github.layer),
       );
-      yield* Effect.promise(() => started.promise);
+      yield* Deferred.await(started);
       const pid = Number(
         yield* Effect.promise(() => readFile(join(stateDir, "shell-home/started"), "utf8")),
       );

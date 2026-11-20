@@ -1,7 +1,8 @@
 import { generateKeyPairSync, verify } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit } from "effect";
+import { Deferred, Effect, Exit, Fiber } from "effect";
+import { TestClock } from "effect/testing";
 import { GitHubApp } from "./github-app.ts";
 import { type Patch, type PublishProgress, type PublishJournal } from "./ports.ts";
 
@@ -63,6 +64,37 @@ const json = (response: ServerResponse, value: unknown, status = 200) => {
 };
 
 describe("GitHub repair publication", () => {
+  it.effect("times out an unresponsive GitHub API request", () =>
+    Effect.gen(function* () {
+      const received = yield* Deferred.make<void>();
+      const http = yield* peer((request) => {
+        request.resume();
+        Deferred.doneUnsafe(received, Effect.void);
+        // Hold the response open so only the adapter's timeout can settle the request.
+      });
+      const github = yield* GitHubApp.make({
+        appId: "1",
+        installationId: 42,
+        privateKey,
+        repo,
+        author: { name: "bot", email: "bot@example.test" },
+        apiUrl: http.url,
+      });
+      const settled = yield* Deferred.make<void>();
+      const fiber = yield* github.listOpenLabeledIssues("agent").pipe(
+        Effect.flip,
+        Effect.tap(() => Deferred.succeed(settled, undefined)),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(received);
+      yield* TestClock.adjust("29 seconds");
+      expect(yield* Deferred.isDone(settled)).toBe(false);
+      yield* TestClock.adjust("2 seconds");
+      const error = yield* Fiber.join(fiber);
+      expect(error.message).toContain("timed out");
+    }),
+  );
+
   it.effect("admits only open, same-repository pull requests authored by the configured App", () =>
     Effect.gen(function* () {
       const pr = {

@@ -15,6 +15,7 @@ import {
 } from "./ports.ts";
 
 const background = BACKGROUND_CONTEXT;
+const neverAborted = new AbortController().signal;
 const author = ["-c", "user.name=caldero", "-c", "user.email=caldero@localhost"];
 const decodePatch = Schema.decodeUnknownEffect(Schema.fromJsonString(Patch));
 const filesJson = Schema.fromJsonString(Schema.Array(FileChange));
@@ -26,9 +27,13 @@ const failure = (error: unknown) => new WorkspaceError({ message: errorMessage(e
 
 /** A change set's identity: the SHA-256 of its files, in path order. */
 const digestOf = Effect.fn("digestOf")(function* (files: ReadonlyArray<FileChange>) {
-  const bytes = yield* Effect.promise(() =>
-    crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(files))),
-  );
+  const bytes = yield* Effect.tryPromise({
+    try: () => crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(files))),
+    catch: (error) =>
+      new WorkspaceError({
+        message: `Could not fingerprint the change set: ${errorMessage(error)}`,
+      }),
+  });
   return Hex.encode(new Uint8Array(bytes));
 });
 
@@ -230,11 +235,11 @@ export const makeGitWorkspace = Effect.fn("makeGitWorkspace")(function* (options
     return undefined;
   });
 
-  const guard = Effect.fn("GitWorkspace.guard")(function* (recovery: WorkspaceRecovery) {
-    const saved = yield* Effect.tryPromise({
-      try: (signal) => recovery.read(signal),
-      catch: failure,
-    });
+  const guard = Effect.fn("GitWorkspace.guard")(function* (
+    recovery: WorkspaceRecovery,
+    signal: AbortSignal = background.abortSignal ?? neverAborted,
+  ) {
+    const saved = yield* recovery.read(signal);
     yield* call((context) => env.createDir(root, { recursive: true }, context));
     const bootPath = `${root}/.boot`;
     if (!(yield* exists(bootPath)))
@@ -247,10 +252,7 @@ export const makeGitWorkspace = Effect.fn("makeGitWorkspace")(function* (options
       saved.bootId === null
         ? undefined
         : `Your workspace was restored to checkpoint ${saved.checkpoint?.number ?? 0}; re-check files before continuing.`;
-    yield* Effect.tryPromise({
-      try: (signal) => recovery.restored(bootId, notice, signal),
-      catch: failure,
-    });
+    yield* recovery.restored(bootId, notice, signal);
   });
 
   /** Every environment operation checks the boot; internal snapshot/restore operations use the raw environment. */
@@ -271,7 +273,7 @@ export const makeGitWorkspace = Effect.fn("makeGitWorkspace")(function* (options
                 invocation.abortSignal instanceof AbortSignal
                   ? invocation.abortSignal
                   : undefined;
-              await run(guarding.withPermits(1)(guard(recovery)), { signal });
+              await run(guarding.withPermits(1)(guard(recovery, signal)), { signal });
               return Reflect.apply(value, target, args);
             };
           },

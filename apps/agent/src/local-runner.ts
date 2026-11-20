@@ -256,7 +256,13 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
       try: () => openNodeSqliteStorage(database),
       catch: (error) => localIoError("Could not open local session storage", error),
     }),
-    (value) => Effect.promise(() => value.close(BACKGROUND_CONTEXT)),
+    (value) =>
+      // Harness.close normally closes this storage first; a repeated close is memoized. Log a failure
+      // instead of turning it into a defect that hides the operation's own error.
+      Effect.tryPromise({
+        try: () => value.close(BACKGROUND_CONTEXT),
+        catch: (error) => localIoError("Could not close local session storage", error),
+      }).pipe(Effect.catch((error) => Effect.logWarning(error.message))),
   );
   const github = yield* GitHub;
   const services = Layer.mergeAll(

@@ -7,7 +7,7 @@ import {
   summarizeSession,
 } from "@caldero/contracts/inbox";
 import { decide, initialSession } from "@caldero/domain";
-import { Effect, Fiber, Layer } from "effect";
+import { Deferred, Effect, Fiber, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import { HttpApiClient } from "effect/http-api";
 import { makeFakeGitHub } from "./fake-github.ts";
@@ -35,7 +35,7 @@ const payload = {
 };
 const setup = Effect.fn("setupInboxHttp")(function* (
   options: {
-    hold?: Promise<void>;
+    hold?: Effect.Effect<void>;
     onAdmission?: () => void;
     failure?: "hydration" | "admission" | "audit" | "permanent";
     unavailableReason?: "temporary" | "overloaded" | "unknown";
@@ -122,7 +122,7 @@ const setup = Effect.fn("setupInboxHttp")(function* (
               message: "Storage unavailable",
               reason: options.unavailableReason ?? "unknown",
             });
-          if (options.hold !== undefined) yield* Effect.promise(() => options.hold!);
+          if (options.hold !== undefined) yield* options.hold;
           if (!seen.has(deliveryId)) {
             starts += 1;
             exists = true;
@@ -276,10 +276,13 @@ describe("Inbox HTTP", () => {
 
   it.effect("acknowledges only after durable admission resolves", () =>
     Effect.gen(function* () {
-      const hold = Promise.withResolvers<void>();
-      const started = Promise.withResolvers<void>();
+      const hold = yield* Deferred.make<void>();
+      const started = yield* Deferred.make<void>();
       let acknowledged = false;
-      const api = yield* setup({ hold: hold.promise, onAdmission: () => started.resolve() });
+      const api = yield* setup({
+        hold: Deferred.await(hold),
+        onAdmission: () => Deferred.doneUnsafe(started, Effect.void),
+      });
       const request = yield* api.webhook().pipe(
         Effect.tap(() =>
           Effect.sync(() => {
@@ -288,10 +291,10 @@ describe("Inbox HTTP", () => {
         ),
         Effect.forkChild,
       );
-      yield* Effect.promise(() => started.promise);
+      yield* Deferred.await(started);
       expect(acknowledged).toBe(false);
       expect(api.starts()).toBe(0);
-      hold.resolve();
+      yield* Deferred.succeed(hold, undefined);
       expect((yield* Fiber.join(request)).status).toBe(204);
       expect(api.starts()).toBe(1);
     }),

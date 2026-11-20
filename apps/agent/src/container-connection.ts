@@ -54,6 +54,14 @@ const ABORT_GRACE_MS = 1000;
 export type NativeContainer = NonNullable<NativeDurableObjectState["container"]>;
 type NativeProcess = Awaited<ReturnType<NativeContainer["exec"]>>;
 type NativeWriter = ReturnType<NonNullable<NativeProcess["stdin"]>["getWriter"]>;
+type NativeSignal = Exclude<
+  NonNullable<Parameters<NativeContainer["exec"]>[1]>["signal"],
+  undefined
+>;
+/** Workerd and Node share the runtime AbortSignal; their declarations are separate. */
+const nativeSignal = (signal: AbortSignal): NativeSignal =>
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion, anti-slop/no-chained-type-assertions -- separate AbortSignal declarations
+  signal as unknown as NativeSignal;
 
 type Pending = {
   resolve: (reply: Reply) => void;
@@ -121,23 +129,33 @@ const aborted = () => new RemoteError({ code: "aborted", message: "aborted" });
 /** One pi-env daemon in the container: started on the first request, started again after it is lost. */
 export class ContainerConnection extends Connection {
   #container: () => NativeContainer;
-  #startContainer: () => Promise<void>;
+  #startContainer: (signal?: AbortSignal) => Promise<void>;
   #onLog: (text: string) => void;
   #session: Session | undefined;
   #ready: Promise<{ info: RemoteInfo; session: Session }> | undefined;
   #sessions = 0;
   #nextId = 1;
   #closed = false;
+  /** Stops a shared startup (including its native exec) when the connection closes. */
+  #abort = new AbortController();
+  /** Rejects at close, so callers stop waiting even while workerd's spawn RPC is still in flight. */
+  #closedRejection: Promise<never>;
+  #rejectClosed: (error: unknown) => void;
 
   constructor(
     container: () => NativeContainer,
-    startContainer: () => Promise<void>,
+    startContainer: (signal?: AbortSignal) => Promise<void>,
     onLog: (text: string) => void = () => {},
   ) {
     super({ command: [] }); // All transport methods below replace the subprocess transport.
     this.#container = container;
     this.#startContainer = startContainer;
     this.#onLog = onLog;
+    const closed = Promise.withResolvers<never>();
+    this.#closedRejection = closed.promise;
+    this.#rejectClosed = closed.reject;
+    // Callers race this promise; an unobserved rejection must not surface as an unhandled one.
+    void this.#closedRejection.catch(() => {});
   }
 
   override async info(signal?: AbortSignal): Promise<RemoteInfo> {
@@ -158,6 +176,9 @@ export class ContainerConnection extends Connection {
   }
   override close(): void {
     this.#closed = true;
+    this.#ready = undefined;
+    this.#abort.abort();
+    this.#rejectClosed(new RemoteError({ code: "unknown", message: "Connection closed" }));
     if (this.#session)
       this.#teardown(
         this.#session,
@@ -173,16 +194,18 @@ export class ContainerConnection extends Connection {
   #connect(signal?: AbortSignal) {
     if (this.#closed)
       return Promise.reject(new RemoteError({ code: "unknown", message: "Connection closed" }));
-    if (this.#ready === undefined) {
-      const ready = this.#start();
+    let ready = this.#ready;
+    if (ready === undefined) {
+      // One close race per shared startup; each caller only waits on this result.
+      ready = Promise.race([this.#start(), this.#closedRejection]);
       this.#ready = ready;
       ready.catch(() => {
         if (this.#ready === ready) this.#ready = undefined;
       });
     }
     return signal === undefined
-      ? this.#ready
-      : awaitWithContext(this.#ready, withAbortSignal(signal, BACKGROUND_CONTEXT));
+      ? ready
+      : awaitWithContext(ready, withAbortSignal(signal, BACKGROUND_CONTEXT));
   }
 
   #send(session: Session, op: string, json: Json, options: RequestOptions): Promise<Reply> {
@@ -231,27 +254,48 @@ export class ContainerConnection extends Connection {
   async #start(): Promise<{ info: RemoteInfo; session: Session }> {
     const container = this.#container();
     const token = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString("hex");
+    const signal = this.#abort.signal;
     let process: NativeProcess | undefined;
     for (let attempt = 0; process === undefined; attempt++) {
       if (this.#closed) throw lost("Connection closed");
       try {
         // Alchemy's start names this Container's image and is a no-op once it runs; calling it on every
         // attempt restarts a container that died with a lost instance while still reported as running.
-        await this.#startContainer();
+        await this.#startContainer(signal);
+        if (this.#closed) throw lost("Connection closed");
         process = await container.exec(["pi-env", "serve", "--token", token], {
           stdin: "pipe",
           stdout: "pipe",
           stderr: "pipe",
           cwd: "/workspace",
+          signal: nativeSignal(signal),
         });
       } catch (error) {
+        if (this.#closed) throw lost("Connection closed");
         if (attempt >= 30)
           throw new RemoteError({ code: "spawn_error", message: String(error), lost: true });
-        await new Promise((r) => setTimeout(r, 1000));
+        if (signal.aborted) throw lost("Connection closed");
+        await new Promise<void>((resolve, reject) => {
+          const abort = () => {
+            clearTimeout(timer);
+            reject(lost("Connection closed"));
+          };
+          const timer = setTimeout(() => {
+            signal.removeEventListener("abort", abort);
+            resolve();
+          }, 1000);
+          signal.addEventListener("abort", abort, { once: true });
+        });
       }
     }
     if (this.#closed) {
-      process.kill(9);
+      // Attach first: a synchronous kill error must not skip the exit handler.
+      void process.exitCode.catch(() => {});
+      try {
+        process.kill(9);
+      } catch {
+        // Already gone.
+      }
       throw lost("Connection closed");
     }
     if (process.stdin === null || process.stdout === null || process.stderr === null) {
@@ -310,6 +354,8 @@ export class ContainerConnection extends Connection {
       }
     } catch {
       // The stream ends with the process; the exit handler tears the session down.
+    } finally {
+      reader.releaseLock();
     }
   }
 
