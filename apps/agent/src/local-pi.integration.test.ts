@@ -104,8 +104,11 @@ describe("Installed Pi profile", () => {
         },
       );
       const fetcher = vi.fn<typeof fetch>((url, init) => {
-        expect(new URL(String(url)).hostname).toBe("auth.openai.com");
-        const body = new URLSearchParams(String(init?.body));
+        expect(new URL(url instanceof Request ? url.url : url).hostname).toBe("auth.openai.com");
+        const rawBody = init?.body;
+        if (typeof rawBody !== "string" && !(rawBody instanceof URLSearchParams))
+          throw new Error(`Expected a form body, received ${typeof rawBody}`);
+        const body = new URLSearchParams(rawBody);
         expect(body.get("grant_type")).toBe("refresh_token");
         expect(body.get("client_id")).toBe("fixture-client");
         return Promise.resolve(

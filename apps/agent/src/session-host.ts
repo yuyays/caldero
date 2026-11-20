@@ -190,7 +190,7 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
       Validate: ({ runId }) =>
         // A validation the session no longer waits for would only race the next run's edits.
         state.status !== "validating" || state.runId !== runId
-          ? Effect.succeed(undefined)
+          ? Effect.undefined
           : workspace.validate().pipe(
               Effect.map((validation): SessionEvent =>
                 validation.passed
@@ -241,8 +241,8 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
       Project: ({ snapshot, instructionId }) =>
         projection.project(decodeState(snapshot), instructionId).pipe(Effect.as(undefined)),
       // Both act on Pi itself, in the task.
-      AbortRun: () => Effect.succeed(undefined),
-      Submit: () => Effect.succeed(undefined),
+      AbortRun: () => Effect.undefined,
+      Submit: () => Effect.undefined,
     });
 
   /**

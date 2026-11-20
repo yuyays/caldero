@@ -37,7 +37,7 @@ export const SessionSummary = Schema.Struct({
   updatedAt: Schema.Finite,
 });
 export type SessionSummary = typeof SessionSummary.Type;
-export const summarizeSession = (state: typeof SessionState.Type): SessionSummary => ({
+export const summarizeSession = (state: SessionState): SessionSummary => ({
   sessionId: state.sessionId,
   repo: state.repo,
   issue: state.issue,
