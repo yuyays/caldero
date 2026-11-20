@@ -298,7 +298,7 @@ const boundaryFiles = {
 fixtureSet("service-boundaries", "packages/contracts/src", boundaryFiles);
 fixtureSet("app-boundaries", "apps/agent/src", boundaryFiles);
 
-void test("lint requires parsed boundaries only in domain workflows", () => {
+void test("lint requires parsed boundaries where untrusted input enters", () => {
   assertRules(codesFor("service-boundaries"), {
     "parameter.ts": ["anti-slop(no-unknown-parameters)"],
     "dictionary.ts": ["anti-slop(no-unsafe-dictionary-type)"],
