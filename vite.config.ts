@@ -25,7 +25,7 @@ export default defineConfig({
       suspicious: "error",
       perf: "warn",
     },
-    // `effecttsgo` requires the Oxlint integration patched by `effect-tsgo patch --oxlint`.
+    // `effecttsgo` needs the integrations patched by the root `prepare` script.
     plugins: ["react", "jsx-a11y", "typescript", "import", "vitest", "effecttsgo"],
     jsPlugins: [
       "./tools/oxlint/index.js",
