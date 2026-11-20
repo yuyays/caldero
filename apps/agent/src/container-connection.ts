@@ -196,17 +196,16 @@ export class ContainerConnection extends Connection {
       return Promise.reject(new RemoteError({ code: "unknown", message: "Connection closed" }));
     let ready = this.#ready;
     if (ready === undefined) {
-      ready = this.#start();
+      // One close race per shared startup; each caller only waits on this result.
+      ready = Promise.race([this.#start(), this.#closedRejection]);
       this.#ready = ready;
       ready.catch(() => {
         if (this.#ready === ready) this.#ready = undefined;
       });
     }
-    const waiting =
-      signal === undefined
-        ? ready
-        : awaitWithContext(ready, withAbortSignal(signal, BACKGROUND_CONTEXT));
-    return Promise.race([waiting, this.#closedRejection]);
+    return signal === undefined
+      ? ready
+      : awaitWithContext(ready, withAbortSignal(signal, BACKGROUND_CONTEXT));
   }
 
   #send(session: Session, op: string, json: Json, options: RequestOptions): Promise<Reply> {
