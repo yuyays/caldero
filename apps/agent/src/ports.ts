@@ -69,8 +69,12 @@ export class Workspace extends Context.Service<
     readonly env: (recovery?: WorkspaceRecovery) => ExecutionEnv;
     /** Upload a complete change set before the caller commits its pointer. */
     readonly checkpoint: (number: number) => Effect.Effect<Checkpoint, WorkspaceError>;
-    /** Make the workspace hold `repo` at `baseSha`; does nothing once it does. */
-    readonly prepare: (repo: Repo, baseSha: string) => Effect.Effect<void, WorkspaceError>;
+    /** Make the workspace hold `repo` at `baseSha`; restart a repair from a clean checkout. */
+    readonly prepare: (
+      repo: Repo,
+      baseSha: string,
+      reset?: boolean,
+    ) => Effect.Effect<void, WorkspaceError>;
     /** Freeze the current change set, run the checks against the frozen copy, and keep the patch. */
     readonly validate: () => Effect.Effect<Validation, WorkspaceError>;
     /** A patch an earlier `validate` froze. */

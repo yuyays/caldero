@@ -4,6 +4,14 @@ import { Schema } from "effect";
 export const Repo = Schema.Struct({ owner: Schema.String, name: Schema.String });
 export type Repo = typeof Repo.Type;
 
+export const RepairTarget = Schema.Struct({
+  number: Schema.Int,
+  headRef: Schema.String,
+  headSha: Schema.String,
+  baseRef: Schema.String,
+});
+export type RepairTarget = typeof RepairTarget.Type;
+
 /** The exact candidate bound to publication. Historical name retained for stored journals. */
 export const ApprovalBinding = Schema.Struct({
   sessionId: Schema.String,
@@ -13,6 +21,7 @@ export const ApprovalBinding = Schema.Struct({
   baseSha: Schema.String,
   baseRef: Schema.String,
   patchDigest: Schema.String,
+  repair: Schema.optionalKey(RepairTarget),
 });
 export type ApprovalBinding = typeof ApprovalBinding.Type;
 
@@ -60,6 +69,7 @@ export const SessionState = Schema.Struct({
   queued: Schema.Array(Schema.String),
   pullRequest: Schema.NullOr(Schema.Struct({ number: Schema.Int, url: Schema.String })),
   failure: Schema.NullOr(Schema.String),
+  repair: Schema.optionalKey(RepairTarget),
   /** Who stopped the session, or its historical reviewer, for the audit trail. */
   decidedBy: Schema.NullOr(Schema.String),
   updatedAt: Schema.Finite,
@@ -70,6 +80,7 @@ export const SessionEvent = Schema.TaggedUnion({
   IssueLabeled: { context: Schema.String, baseSha: Schema.String, baseRef: Schema.String },
   UserInput: { text: Schema.String },
   Retry: { expectedRevision: Schema.Int },
+  Repair: { expectedRevision: Schema.Int, target: RepairTarget, context: Schema.String },
   RunAnswered: { runId: Schema.Int },
   Validated: { runId: Schema.Int, patchDigest: Schema.String, evidence: Schema.String },
   ValidationFailed: { runId: Schema.Int, evidence: Schema.String },
@@ -191,7 +202,8 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
   /** Starts the next run after a failure, or fails the session once the attempts are used up. */
   const retryRun = (text: string, failure: string): Decision => {
     const attempts = state.attempts + 1;
-    if (attempts >= attemptLimit) return applied({ status: "failed", attempts, failure });
+    if (state.repair || attempts >= attemptLimit)
+      return applied({ status: "failed", attempts, failure });
     const runId = state.runId + 1;
     return applied({ status: "running", runId, attempts }, [submit(runId, "start", text)]);
   };
@@ -212,6 +224,7 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
         return applied({ status: "publishing", attempts: 0, failure: null }, [
           (instructionId) => Instruction.cases.Reconcile.make({ instructionId, binding }),
         ]);
+      if (state.repair) return unchanged("stale");
       const runId = state.runId + 1;
       return applied({ status: "running", runId, attempts: 0, failure: null }, [
         submit(
@@ -221,7 +234,31 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
         ),
       ]);
     },
+    Repair: ({ expectedRevision, target, context }) => {
+      if (
+        state.status !== "published" ||
+        state.revision !== expectedRevision ||
+        state.pullRequest?.number !== target.number
+      )
+        return unchanged("stale");
+      const runId = state.runId + 1;
+      return applied(
+        {
+          status: "running",
+          runId,
+          repair: target,
+          baseSha: target.headSha,
+          baseRef: target.baseRef,
+          attempts: 0,
+          candidate: null,
+          failure: null,
+          queued: [],
+        },
+        [submit(runId, "start", context)],
+      );
+    },
     UserInput: ({ text }) => {
+      if (state.repair) return unchanged("stale");
       switch (state.status) {
         case "running":
           return applied({}, [submit(state.runId, "steer", text)]);
@@ -257,6 +294,7 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
         baseSha: state.baseSha,
         baseRef: state.baseRef,
         patchDigest,
+        ...(state.repair ? { repair: state.repair } : {}),
       };
       return applied(
         {
@@ -308,7 +346,9 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
           Instruction.cases.Comment.make({
             instructionId,
             key: `published:v${state.version}`,
-            text: `Opened ${url} for version ${state.version}.`,
+            text: state.candidate?.binding.repair
+              ? `Added a checked CI repair to ${url} (version ${state.version}).`
+              : `Opened ${url} for version ${state.version}.`,
           }),
       ]);
     },

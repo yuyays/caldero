@@ -1,15 +1,16 @@
 import { mkdir, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { Events, type Repo } from "@caldero/domain";
+import { Events, type RepairTarget, type Repo } from "@caldero/domain";
 import { Effect, Layer, Schema } from "effect";
 import { makeDiskWorkspaceStore } from "./disk-workspace-store.ts";
 import { readLocalSession } from "./local-status.ts";
 import { LocalWorkspace } from "./local-workspace.ts";
-import { GitHub, Projection } from "./ports.ts";
+import { GitHub, type GitHubError, Projection } from "./ports.ts";
 import { openSessionHost, type SessionHostOptions } from "./session-host.ts";
 
 export class LocalRunnerError extends Schema.TaggedError<LocalRunnerError>()("LocalRunnerError", {
@@ -142,31 +143,56 @@ class LocalExecutionEnv extends NodeExecutionEnv {
   }
 }
 
-/** Refuse retry before host activation; the caller scope retains the validated session lock. */
-const prepareLocalRetry = Effect.fn("prepareLocalRetry")(function* (options: {
+const pathExists = Effect.fn("LocalRunner.pathExists")((path: string) =>
+  Effect.tryPromise({
+    try: () =>
+      stat(path).then(
+        () => true,
+        (error: unknown) => {
+          if (errorCode(error) === "ENOENT") return false;
+          throw error;
+        },
+      ),
+    catch: (error) => localIoError("Could not inspect local session storage", error),
+  }),
+);
+
+/** A second state root must never silently admit an issue with known legacy state. */
+const refuseLegacyIssue = Effect.fn("refuseLegacyIssue")(function* (repo: Repo, issue: number) {
+  for (const name of ["puchero", "metate"]) {
+    const path = join(
+      homedir(),
+      ".local/state",
+      name,
+      repo.owner,
+      repo.name,
+      String(issue),
+      "session.sqlite",
+    );
+    if (yield* pathExists(path))
+      return yield* new LocalRunnerError({
+        reason: "configuration",
+        message: `Issue #${issue} already has pre-rename ${name} state. Use a fresh issue with Caldero.`,
+      });
+  }
+  return yield* Effect.void;
+});
+
+/** Inspect under the runner lock before opening a host that can resume durable work. */
+const prepareSavedIssue = Effect.fn("prepareSavedIssue")(function* (options: {
   readonly stateDir: string;
   readonly repo: Repo;
   readonly issue: number;
 }) {
   const path = join(options.stateDir, "session.sqlite");
-  yield* Effect.tryPromise({
-    try: () => stat(path),
-    catch: (error) =>
-      errorCode(error) === "ENOENT"
-        ? new LocalRunnerError({
-            message: "Retry requires an existing saved session; no state was created",
-          })
-        : localIoError("Could not access the saved session for retry", error),
-  });
+  if (!(yield* pathExists(path)))
+    return yield* new LocalRunnerError({
+      message: "This operation requires an existing saved session; no state was created",
+    });
   yield* holdLocalLock(options.stateDir);
-  const state = yield* readLocalSession(path, options.repo, options.issue).pipe(
+  return yield* readLocalSession(path, options.repo, options.issue).pipe(
     Effect.mapError((error) => new LocalRunnerError({ message: error.message })),
   );
-  if (state?.status !== "failed")
-    return yield* new LocalRunnerError({
-      message: `Only failed sessions can be retried. Resume active work with pnpm --filter @caldero/agent local --issue ${options.issue}, using the same --state-dir and --check options.`,
-    });
-  return state;
 });
 
 /** The caller's scope owns this host, SQLite and lock; reopening resumes nonterminal work in the same issue. */
@@ -180,8 +206,12 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   readonly admit?: boolean;
   /** Explicitly retry only an existing failed session; never admit new work. */
   readonly retry?: boolean;
+  readonly repair?: (
+    number: number,
+  ) => Effect.Effect<{ readonly target: RepairTarget; readonly context: string }, GitHubError>;
 }) {
   yield* validateLocalIssue(options.issue, options.checks);
+  yield* refuseLegacyIssue(options.repo, options.issue);
   const root = join(options.stateDir, "workspace");
   const home = join(options.stateDir, "shell-home");
   const createDirectories = Effect.tryPromise({
@@ -192,12 +222,38 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
       ]),
     catch: (error) => localIoError("Could not create the local session directory", error),
   });
-  const retryState = options.retry ? yield* prepareLocalRetry(options) : undefined;
+  const saved = options.retry || options.repair ? yield* prepareSavedIssue(options) : undefined;
+  if (options.retry && saved?.status !== "failed")
+    return yield* new LocalRunnerError({
+      message: `Only failed sessions can be retried. Resume active work with pnpm --filter @caldero/agent local --issue ${options.issue}, using the same --state-dir and --check options.`,
+    });
+  if (options.retry && saved?.repair && !saved.candidate)
+    return yield* new LocalRunnerError({
+      message:
+        "The repair stopped before a checked patch was saved. Use the PR to continue manually.",
+    });
+  if (options.repair && (saved?.status !== "published" || !saved.pullRequest))
+    return yield* new LocalRunnerError({
+      message: "Repair requires a published Caldero session with a saved pull request",
+    });
+  const repair =
+    options.repair && saved?.pullRequest
+      ? yield* options.repair(saved.pullRequest.number)
+      : undefined;
   yield* createDirectories;
-  if (!options.retry) yield* holdLocalLock(options.stateDir);
+  const database = join(options.stateDir, "session.sqlite");
+  if (!options.retry && !options.repair) {
+    yield* holdLocalLock(options.stateDir);
+    if (yield* pathExists(database))
+      yield* readLocalSession(database, options.repo, options.issue).pipe(
+        Effect.mapError(
+          (error) => new LocalRunnerError({ reason: "configuration", message: error.message }),
+        ),
+      );
+  }
   const storage = yield* Effect.acquireRelease(
     Effect.tryPromise({
-      try: () => openNodeSqliteStorage(join(options.stateDir, "session.sqlite")),
+      try: () => openNodeSqliteStorage(database),
       catch: (error) => localIoError("Could not open local session storage", error),
     }),
     (value) => Effect.promise(() => value.close(BACKGROUND_CONTEXT)),
@@ -223,10 +279,19 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
     },
     ...options.pi,
   }).pipe(Effect.provide(serviceContext));
-  if (retryState != null) {
+  if (repair && saved) {
     const result = yield* host.deliver(
-      Events.Retry.make({ expectedRevision: retryState.revision }),
-      `local-retry:${retryState.revision}`,
+      Events.Repair.make({ ...repair, expectedRevision: saved.revision }),
+      `local-repair:${saved.revision}`,
+    );
+    if (result === "stale")
+      return yield* new LocalRunnerError({
+        message: "The saved PR session changed before repair could start",
+      });
+  } else if (options.retry && saved != null) {
+    const result = yield* host.deliver(
+      Events.Retry.make({ expectedRevision: saved.revision }),
+      `local-retry:${saved.revision}`,
     );
     if (result === "stale")
       return yield* new LocalRunnerError({

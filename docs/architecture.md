@@ -19,7 +19,8 @@ and Caldero never merges automatically.
 | React inbox for local SQLite sessions                                         | Not connected; the inbox reads the Worker/SessionDO path                                            |
 | Slack, cron and general-purpose tool/result sessions                          | Future work                                                                                         |
 | Global/per-team SchedulerDO, multi-user scheduling and parallel local workers | Future work                                                                                         |
-| Automatic terminal retry and post-PR CI/review repair                         | Future work                                                                                         |
+| Explicit local CI repair                                                      | One checked commit to the same PR for a current failing Actions job                                 |
+| Automatic retries and CI/review follow-ups                                    | Future work                                                                                         |
 
 The local and Cloudflare paths reuse the same session core. They are execution
 adapters, not separate agent implementations. The diagrams below distinguish

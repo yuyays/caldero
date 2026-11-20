@@ -6,6 +6,7 @@ import { Events, Repo } from "@caldero/domain";
 import { Effect, Schema } from "effect";
 import { GitHubApp } from "./github-app.ts";
 import { openLocalPi } from "./local-pi.ts";
+import { readLocalRepairContext } from "./local-repair-ci.ts";
 import {
   openLocalIssue,
   LocalRunnerError,
@@ -30,12 +31,14 @@ const help = `Caldero with this machine's Pi login and saved model settings.
 
 pnpm --filter @caldero/agent local --issue NUMBER --check 'COMMAND' [--check 'COMMAND']
 pnpm retry --issue NUMBER --check COMMAND [--check COMMAND]
+pnpm repair --issue NUMBER --check COMMAND [--check COMMAND]
 pnpm --filter @caldero/agent local --watch --check 'COMMAND' [--check 'COMMAND']
 
 --github-config PATH   GitHub App config (default ~/.config/caldero/github-app.json)
 --pi-dir PATH          Pi profile directory (default Pi's configured agent directory)
 --state-dir PATH       Durable state (default ~/.local/state/caldero/OWNER/REPO/ISSUE)
 --retry                Explicitly retry an existing failed session (pnpm retry)
+--repair               Repair one failed CI job on the saved open PR (pnpm repair)
 --watch                Poll labeled issues, one at a time; resume admitted work on restart
 --label NAME           Watch label (default agent)
 --poll-seconds N       Delay between watch scans (default 60)
@@ -66,6 +69,7 @@ const command = Effect.gen(function* () {
           issue: { type: "string" },
           watch: { type: "boolean" },
           retry: { type: "boolean" },
+          repair: { type: "boolean" },
           label: { type: "string" },
           "poll-seconds": { type: "string" },
           "state-root": { type: "string" },
@@ -87,11 +91,12 @@ const command = Effect.gen(function* () {
     (values.issue !== undefined ||
       values["state-dir"] !== undefined ||
       values["check-connection"] ||
-      values.retry)
+      values.retry ||
+      values.repair)
   )
     return yield* new LocalRunnerError({
       message:
-        "--watch cannot be combined with --issue, --state-dir, --retry or --check-connection",
+        "--watch cannot be combined with --issue, --state-dir, --retry, --repair or --check-connection",
     });
   if (
     !values.watch &&
@@ -105,6 +110,10 @@ const command = Effect.gen(function* () {
   if (values.retry && values["check-connection"])
     return yield* new LocalRunnerError({
       message: "--retry cannot be combined with --check-connection",
+    });
+  if (values.repair && (values.retry || values["check-connection"]))
+    return yield* new LocalRunnerError({
+      message: "--repair cannot be combined with --retry or --check-connection",
     });
   const pollSeconds = Number(values["poll-seconds"] ?? 60);
   if (values.watch && (!Number.isFinite(pollSeconds) || pollSeconds < 1 || !label.trim()))
@@ -129,7 +138,10 @@ const command = Effect.gen(function* () {
   const configText = yield* Effect.tryPromise({
     try: () => readFile(configPath, "utf8"),
     catch: () =>
-      new LocalRunnerError({ message: "Could not read the GitHub App configuration file" }),
+      new LocalRunnerError({
+        message:
+          "Could not read the GitHub App configuration. Use ~/.config/caldero/github-app.json or pass --github-config PATH.",
+      }),
   });
   const config = yield* decodeGitHub(configText).pipe(
     Effect.mapError(() => new LocalRunnerError({ message: "Invalid GitHub App configuration" })),
@@ -197,6 +209,20 @@ const command = Effect.gen(function* () {
     issue,
     stateDir,
     retry: values.retry ?? false,
+    ...(values.repair
+      ? {
+          repair: (number: number) =>
+            github
+              .readRepairTarget(number)
+              .pipe(
+                Effect.flatMap((target) =>
+                  readLocalRepairContext(config.repo, target).pipe(
+                    Effect.map((context) => ({ target, context })),
+                  ),
+                ),
+              ),
+        }
+      : {}),
     checks: values.check ?? [],
     pi,
   }).pipe(Effect.provideService(GitHub, github));
@@ -211,9 +237,10 @@ const command = Effect.gen(function* () {
           }),
           (exit) => Effect.sync(() => process.removeListener("SIGINT", exit)),
         );
+        const { state } = yield* host.view();
         const result = yield* host.deliver(
           Events.Cancel.make({ actor: "local-user" }),
-          "local-stop",
+          `local-stop:${state.runId}`,
         );
         yield* Effect.logInfo(
           result === "stale"
