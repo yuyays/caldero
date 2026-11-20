@@ -3,6 +3,14 @@ Assessment, not an approved plan.
 
 # Open SWE compared with caldero
 
+> **Superseded as a description of the current system.** This is a time-pinned
+> assessment of the design at 2026-11-14, not of what exists now. Two things changed
+> after it was written: publication no longer waits for an approval step — a validated
+> candidate opens a pull request automatically — and the `CredentialDO`, `SchedulerDO`,
+> D1 identity and policy layers it lists were proposals that were never built. See the
+> [architecture overview](../architecture.md) for the current state and what remains
+> unbuilt.
+
 ## 1. Architecture and evidence
 
 The [March announcement](https://www.langchain.com/blog/open-swe-an-open-source-framework-for-internal-coding-agents) describes Deep Agents on LangGraph, isolated per-thread sandboxes, Slack/Linear/GitHub triggers, deterministic conversation IDs, repository instructions, queued steering, and automatic PR completion. The repository has since become **Robin**. This assessment pins inspected code to `444ab3bf577d6b9c61f8becb4145cae411b202f1`; announcement behavior is not necessarily current behavior. The [current README][readme] confirms this runtime shift; the customization guide’s trigger section still describes older backend webhook routing, so code takes precedence here.

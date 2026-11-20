@@ -1,5 +1,15 @@
-# Keeps the CI workflow's actions current. Dependency updates are left to the
-# project; add an npm (or bun) entry here to have Dependabot manage them too.
+# Keeps the CI workflow's actions current, and keeps the dependency set moving.
+#
+# The agent stack is exact-pinned on purpose, and the groups below exist so the
+# pins can move. @earendil-works/* are co-released — every Pi package has to match
+# pi-durable's version — and alchemy is a beta pair with @alchemy.run/cloudflare.
+# Floating ranges would let one half drift ahead of the other between installs,
+# which fails in ways that look like a code bug. Bumping each family in one pull
+# request instead keeps them coherent and lets CI judge the whole set at once.
+#
+# pnpm-workspace.yaml also holds a `minimumReleaseAge` gate, so a version has to
+# be public for a day before it can install. That is supply-chain protection, not
+# an update policy: it delays a bump, it does not block one.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -10,3 +20,35 @@ updates:
       github-actions:
         patterns:
           - "*"
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    versioning-strategy: increase
+    # One pull request per family is the point; a queue of twelve is not.
+    open-pull-requests-limit: 5
+    groups:
+      pi:
+        patterns:
+          - "@earendil-works/*"
+      alchemy:
+        patterns:
+          - "alchemy"
+          - "@alchemy.run/*"
+      effect:
+        patterns:
+          - "effect"
+          - "@effect/platform-node"
+          - "@effect/sql-pg"
+          - "@effect/vitest"
+      toolchain:
+        patterns:
+          - "typescript"
+          - "@effect/tsgo"
+          - "@oxlint/plugins"
+          - "vite-plus"
+          - "vite"
+          - "vitest"
+          - "@vitest/*"
+          - "playwright"
