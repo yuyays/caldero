@@ -26,8 +26,6 @@ the form coding agents read. Three rules explain almost every review comment:
   that restates a mock's output proves nothing, and tests for removed features go away
   with them.
 
-A suppression needs a reason: `// oxlint-disable-next-line rule -- why`.
-
 ## How the lint policy tests work
 
 `tools/effect-policy.test.js` writes throwaway fixture directories _inside_ real source
