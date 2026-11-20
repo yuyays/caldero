@@ -7,23 +7,8 @@ code exists. Read [`docs/architecture.md`](docs/architecture.md) before changing
 behavior: it records which module owns each decision.
 
 Setup, requirements and the check commands live in the [README](README.md#verify-changes).
-This file covers only what those don't: the toolchain's sharp edges, the conventions
-lint enforces, and how the rule tests work.
-
-## Toolchain rough edges
-
-Being aware of these saves a confusing hour:
-
-- **TypeScript 7** with the native compiler, and **`vite-plus` (`vp`)** driving lint,
-  format, test and build. Neither is the conventional setup you may expect.
-- **`prepare` patches binaries.** `pnpm install` rewrites `tsc` and `oxlint` through
-  `@effect/tsgo`. That is expected, not a broken install — and pnpm may separately ask
-  you to approve dependency-provided agent skills.
-- **`unstable-api-usage` warnings** on Effect and `@effect/vitest` APIs are expected
-  and do not fail the build.
-- **Integration tests** (`*.integration.test.ts`) spawn processes and open SQLite
-  files, so they run against a 30 s ceiling rather than 5 s.
-- **Windows is untested.** The local runner assumes Linux semantics.
+This file covers only what those don't: the conventions lint enforces, and how the
+rule tests work.
 
 ## Conventions
 

@@ -29,8 +29,7 @@ tracks each piece and says what is unbuilt.
   Issues write permission
 - Docker for Cloudflare local development
 
-See the [toolchain rough edges](CONTRIBUTING.md#toolchain-rough-edges) before
-reporting a setup problem.
+See [CONTRIBUTING.md](CONTRIBUTING.md) before reporting a setup problem.
 
 ## Run a single issue
 
@@ -111,9 +110,7 @@ pnpm build
 
 Browser component tests need a one-time download: `pnpm browser:install`, then
 `pnpm test:browser`. `pnpm test` also lints deliberately invalid examples, which is how
-the custom rules are shown to work rather than merely configured. The toolchain expects
-TypeScript 7 and `vite-plus`; see [CONTRIBUTING.md](CONTRIBUTING.md#toolchain-rough-edges)
-for the sharp edges.
+the custom rules are shown to work rather than merely configured.
 
 ## Security
 
