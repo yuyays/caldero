@@ -246,7 +246,7 @@ const command = Effect.gen(function* () {
   return yield* Effect.void;
 });
 
-// oxlint-disable-next-line caldero/runtime-boundary -- Node CLI entrypoint owns the single Effect runtime
+// Node CLI entrypoint owns the single Effect runtime.
 await Effect.runPromise(
   command.pipe(
     Effect.scoped,

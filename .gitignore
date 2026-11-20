@@ -4,7 +4,6 @@ dist
 .env.local
 .DS_Store
 coverage
-packages/create-caldero/template
 *.tgz
 
 .tanstack

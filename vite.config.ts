@@ -90,11 +90,14 @@ export default defineConfig({
         rules: { "caldero/runtime-boundary": "error" },
       },
       {
-        // Entry points and the web adapters that hand Effects to the UI framework.
+        // Entry points, CLI runtimes and the web adapters that hand Effects to a framework.
         files: [
           // Pi Durable calls the session host's tasks as Promises.
           "apps/agent/src/session-host.ts",
           "apps/agent/src/SessionDO.ts",
+          // Node entrypoints own the process's single Effect runtime.
+          "apps/agent/src/local-cli.ts",
+          "apps/agent/src/local-status-cli.ts",
           "apps/web/src/lib/inbox.ts",
           ...testFiles,
         ],
@@ -123,8 +126,13 @@ export default defineConfig({
         },
       },
       {
-        // Domain workflows and contracts parse input at their boundary instead of passing it on.
-        files: ["packages/contracts/src/**/*.ts", "packages/domain/src/**/*.ts"],
+        // Domain workflows, contracts and inbound adapters parse input at their boundary
+        // instead of passing it on.
+        files: [
+          "packages/contracts/src/**/*.ts",
+          "packages/domain/src/**/*.ts",
+          "apps/agent/src/inbox-http.ts",
+        ],
         rules: {
           "anti-slop/no-unknown-parameters": "error",
           "anti-slop/no-unknown-returns": "error",
