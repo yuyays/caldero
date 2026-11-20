@@ -354,7 +354,7 @@ const suppressionReason = {
 };
 
 export default {
-  meta: { name: "starter" },
+  meta: { name: "caldero" },
   rules: {
     "workspace-imports": workspaceImports,
     "no-wall-clock-in-tests": noWallClockInTests,

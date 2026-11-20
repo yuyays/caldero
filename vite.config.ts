@@ -81,13 +81,13 @@ export default defineConfig({
       "anti-slop/no-widen-then-assert": "error",
       "anti-slop-effect/no-manual-effect-error-tag": "error",
       "anti-slop-effect/no-manual-tagged-construction": "error",
-      "starter/schema-compile-scope": "error",
-      "starter/suppression-reason": "error",
+      "caldero/schema-compile-scope": "error",
+      "caldero/suppression-reason": "error",
     },
     overrides: [
       {
         files: ["apps/api/src/**/*.ts", "apps/agent/src/**/*.ts", "apps/web/src/**"],
-        rules: { "starter/runtime-boundary": "error" },
+        rules: { "caldero/runtime-boundary": "error" },
       },
       {
         // Entry points and the web adapters that hand Effects to the UI framework.
@@ -102,7 +102,7 @@ export default defineConfig({
           "apps/web/src/lib/inbox.ts",
           ...testFiles,
         ],
-        rules: { "starter/runtime-boundary": "off" },
+        rules: { "caldero/runtime-boundary": "off" },
       },
       {
         // Cloudflare and runtime-selection entry points compose scoped services.
@@ -116,14 +116,14 @@ export default defineConfig({
       {
         // API tests run Effects through @effect/vitest, which provides TestClock.
         files: ["apps/api/src/**"],
-        rules: { "starter/test-runtime": "error" },
+        rules: { "caldero/test-runtime": "error" },
       },
       {
         // Tooling tests under tools/ and the generator measure real processes.
         files: ["apps/**", "packages/contracts/**", "packages/domain/**"],
         rules: {
-          "starter/no-wall-clock-in-tests": "error",
-          "starter/no-timer-waits-in-tests": "error",
+          "caldero/no-wall-clock-in-tests": "error",
+          "caldero/no-timer-waits-in-tests": "error",
         },
       },
       {
@@ -141,7 +141,7 @@ export default defineConfig({
       },
       {
         files: ["apps/**", "packages/**"],
-        rules: { "starter/workspace-imports": "error" },
+        rules: { "caldero/workspace-imports": "error" },
       },
       {
         // The browser client module is the frontend's Effect entry point.
@@ -156,7 +156,7 @@ export default defineConfig({
           // Test cases provide their own layers and run once.
           "effecttsgo/effect-fn-opportunity": "off",
           "effecttsgo/strict-effect-provide": "off",
-          "starter/schema-compile-scope": "off",
+          "caldero/schema-compile-scope": "off",
         },
       },
     ],

@@ -243,7 +243,7 @@ fixtureSet("runtime-boundaries", "apps/api/src", Object.fromEntries(runtimeCases
 void test("lint restricts imported runtimes while allowing adapters and unrelated methods", () => {
   const codes = codesFor("runtime-boundaries");
   for (const [name, , allowed] of runtimeCases) {
-    assertRules(codes, { [name]: allowed ? [] : ["starter(runtime-boundary)"] });
+    assertRules(codes, { [name]: allowed ? [] : ["caldero(runtime-boundary)"] });
   }
 });
 
@@ -328,13 +328,13 @@ fixtureSet("schema-compile-scope", "apps/api/src", {
 
 void test("lint hoists Schema compilers out of function bodies", () => {
   assertRules(codesFor("schema-compile-scope"), {
-    "inline.ts": ["starter(schema-compile-scope)"],
+    "inline.ts": ["caldero(schema-compile-scope)"],
     "hoisted.ts": [],
-    "aliased.ts": ["starter(schema-compile-scope)"],
+    "aliased.ts": ["caldero(schema-compile-scope)"],
     "local.ts": [],
-    "camel.ts": ["starter(schema-compile-scope)"],
-    "argument.ts": ["starter(schema-compile-scope)"],
-    "named.ts": ["starter(schema-compile-scope)"],
+    "camel.ts": ["caldero(schema-compile-scope)"],
+    "argument.ts": ["caldero(schema-compile-scope)"],
+    "named.ts": ["caldero(schema-compile-scope)"],
     "parameter.ts": [],
   });
 });
@@ -358,16 +358,16 @@ void test("lint keeps tests on real seams, Effect test runners, and controlled c
   assertRules(codes, {
     "vite-plus.test.ts": ["anti-slop(no-module-mocking)"],
     "effect-vitest.test.ts": ["anti-slop(no-module-mocking)"],
-    "runtime.test.ts": ["starter(test-runtime)"],
-    "managed.test.ts": ["starter(test-runtime)"],
-    "wall-clock.test.ts": ["starter(no-wall-clock-in-tests)"],
-    "global-clock.test.ts": ["starter(no-wall-clock-in-tests)"],
-    "date-call.test.ts": ["starter(no-wall-clock-in-tests)"],
+    "runtime.test.ts": ["caldero(test-runtime)"],
+    "managed.test.ts": ["caldero(test-runtime)"],
+    "wall-clock.test.ts": ["caldero(no-wall-clock-in-tests)"],
+    "global-clock.test.ts": ["caldero(no-wall-clock-in-tests)"],
+    "date-call.test.ts": ["caldero(no-wall-clock-in-tests)"],
     "fixed-clock.test.ts": [],
     "clock.ts": [],
   });
   for (const name of ["runtime.test.ts", "managed.test.ts"]) {
-    assert.ok(!codes.get(name).has("starter(runtime-boundary)"), `${name} is a test, not app code`);
+    assert.ok(!codes.get(name).has("caldero(runtime-boundary)"), `${name} is a test, not app code`);
   }
 });
 
@@ -376,7 +376,7 @@ const webRuntimeSource =
 fixtureSet("web-runtime", "apps/web/src", { "users-panel.ts": webRuntimeSource }, skipWithoutWeb);
 
 void test("lint keeps web Effect runtimes in the client adapters", { skip: skipWithoutWeb }, () => {
-  assertRules(codesFor("web-runtime"), { "users-panel.ts": ["starter(runtime-boundary)"] });
+  assertRules(codesFor("web-runtime"), { "users-panel.ts": ["caldero(runtime-boundary)"] });
 });
 
 const webTestSource =
@@ -426,13 +426,13 @@ fixtureSet("tooling-timers", "tools", { "wait.test.js": timerCases["alias.test.t
 void test("lint rejects direct timer waits in unit tests without banning event signals", () => {
   const codes = codesFor("timer-waits");
   assertRules(codes, {
-    "wrapped.test.ts": ["starter(no-timer-waits-in-tests)"],
-    "callback.test.ts": ["starter(no-timer-waits-in-tests)"],
-    "nested.test.ts": ["starter(no-timer-waits-in-tests)"],
-    "alias.test.ts": ["starter(no-timer-waits-in-tests)"],
-    "namespace.test.ts": ["starter(no-timer-waits-in-tests)"],
-    "default.test.ts": ["starter(no-timer-waits-in-tests)"],
-    "callback-import.test.ts": ["starter(no-timer-waits-in-tests)"],
+    "wrapped.test.ts": ["caldero(no-timer-waits-in-tests)"],
+    "callback.test.ts": ["caldero(no-timer-waits-in-tests)"],
+    "nested.test.ts": ["caldero(no-timer-waits-in-tests)"],
+    "alias.test.ts": ["caldero(no-timer-waits-in-tests)"],
+    "namespace.test.ts": ["caldero(no-timer-waits-in-tests)"],
+    "default.test.ts": ["caldero(no-timer-waits-in-tests)"],
+    "callback-import.test.ts": ["caldero(no-timer-waits-in-tests)"],
     "shadow-import.test.ts": [],
     "retry.test.ts": [],
     "shadow.test.ts": [],
@@ -517,13 +517,13 @@ void test(
   { skip: skipWithoutWeb },
   () => {
     assertRules(codesFor("web-contracts"), {
-      "relative.ts": ["starter(workspace-imports)"],
-      "root.ts": ["starter(workspace-imports)"],
-      "alias.ts": ["starter(workspace-imports)"],
-      "package.ts": ["starter(workspace-imports)"],
-      "normalized.ts": ["starter(workspace-imports)"],
-      "dynamic.ts": ["starter(workspace-imports)"],
-      "template.ts": ["starter(workspace-imports)"],
+      "relative.ts": ["caldero(workspace-imports)"],
+      "root.ts": ["caldero(workspace-imports)"],
+      "alias.ts": ["caldero(workspace-imports)"],
+      "package.ts": ["caldero(workspace-imports)"],
+      "normalized.ts": ["caldero(workspace-imports)"],
+      "dynamic.ts": ["caldero(workspace-imports)"],
+      "template.ts": ["caldero(workspace-imports)"],
       "contracts.ts": [],
     });
   },
@@ -547,10 +547,10 @@ void test(
   { skip: skipWithoutWeb },
   () => {
     assertRules(codesFor("web-config"), {
-      "config.ts": ["starter(workspace-imports)"],
+      "config.ts": ["caldero(workspace-imports)"],
     });
     assertRules(codesFor("api-web-import"), {
-      "web.ts": ["starter(workspace-imports)"],
+      "web.ts": ["caldero(workspace-imports)"],
     });
   },
 );
@@ -572,7 +572,7 @@ void test(
   { skip: skipWithoutVue },
   () => {
     assertRules(codesFor("vue-imports"), {
-      "private.vue": ["starter(workspace-imports)"],
+      "private.vue": ["caldero(workspace-imports)"],
       "public.vue": [],
     });
   },
@@ -589,11 +589,11 @@ fixtureSet("contracts-independence", "packages/contracts/src", {
 
 void test("lint keeps contracts independent of applications", () => {
   assertRules(codesFor("contracts-independence"), {
-    "app.ts": ["starter(workspace-imports)"],
-    "relative.ts": ["starter(workspace-imports)"],
-    "dynamic.ts": ["starter(workspace-imports)"],
-    "import-type.ts": ["starter(workspace-imports)"],
-    "require.ts": ["starter(workspace-imports)"],
+    "app.ts": ["caldero(workspace-imports)"],
+    "relative.ts": ["caldero(workspace-imports)"],
+    "dynamic.ts": ["caldero(workspace-imports)"],
+    "import-type.ts": ["caldero(workspace-imports)"],
+    "require.ts": ["caldero(workspace-imports)"],
     "local.ts": [],
   });
 });
@@ -612,10 +612,10 @@ void test("lint requires public package exports across workspaces", () => {
   assertRules(codesFor("public-exports"), {
     "public.ts": [],
     "root.ts": [],
-    "private.ts": ["starter(workspace-imports)"],
-    "type.ts": ["starter(workspace-imports)"],
-    "relative.ts": ["starter(workspace-imports)"],
-    "normalized.ts": ["starter(workspace-imports)"],
+    "private.ts": ["caldero(workspace-imports)"],
+    "type.ts": ["caldero(workspace-imports)"],
+    "relative.ts": ["caldero(workspace-imports)"],
+    "normalized.ts": ["caldero(workspace-imports)"],
     "local.ts": [],
   });
 });
@@ -646,11 +646,11 @@ fixtureSet("export-maps", "apps/api/src", {
 
 void test("lint respects empty export maps, conditional roots, and private pattern exclusions", () => {
   assertRules(codesFor("export-maps"), {
-    "empty.ts": ["starter(workspace-imports)"],
+    "empty.ts": ["caldero(workspace-imports)"],
     "conditional.ts": [],
     "pattern.ts": [],
-    "private.ts": ["starter(workspace-imports)"],
-    "blocked.ts": ["starter(workspace-imports)"],
+    "private.ts": ["caldero(workspace-imports)"],
+    "blocked.ts": ["caldero(workspace-imports)"],
   });
 });
 
@@ -676,7 +676,7 @@ void test("lint requires explanations for lint, TypeScript, and Effect suppressi
     // `vp lint <file>` exits 1 when the file has an error, which is the per-file status
     // this test used to read from a separate lint process.
     assert.equal(
-      diagnostics.some((diagnostic) => diagnostic.code === "starter(suppression-reason)"),
+      diagnostics.some((diagnostic) => diagnostic.code === "caldero(suppression-reason)"),
       !allowed,
       `${name}: ${diagnostics.map((diagnostic) => diagnostic.code).join(", ")}`,
     );
