@@ -1,7 +1,7 @@
 import { Database, DatabaseError } from "../db/database.ts";
 import { Effect, Result } from "effect";
 import { describe, expect, it } from "@effect/vitest";
-import { UsersListError } from "@puchero/contracts/http";
+import { UsersListError } from "@caldero/contracts/http";
 import { listUsers } from "./users.ts";
 
 describe("listUsers", () => {

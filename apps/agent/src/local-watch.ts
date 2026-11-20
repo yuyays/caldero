@@ -1,7 +1,7 @@
 import { mkdir, open, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
-import type { Repo, Status } from "@puchero/domain";
-import { SessionFault } from "@puchero/contracts/inbox";
+import type { Repo, Status } from "@caldero/domain";
+import { SessionFault } from "@caldero/contracts/inbox";
 import { Deferred, Effect, Result, Schema, type Scope } from "effect";
 import { holdLocalLock, LocalRunnerError } from "./local-runner.ts";
 import type { GitHubError } from "./ports.ts";

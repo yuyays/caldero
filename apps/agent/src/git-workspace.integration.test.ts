@@ -15,7 +15,7 @@ registerWorkspaceContract(
   "LocalWorkspace",
   Effect.fn("prepared")(function* () {
     const root = yield* Effect.acquireRelease(
-      Effect.promise(() => mkdtemp(join(tmpdir(), "puchero-ws-"))),
+      Effect.promise(() => mkdtemp(join(tmpdir(), "caldero-ws-"))),
       (path) => Effect.promise(() => rm(path, { recursive: true, force: true })),
     );
     const store = makeMemoryWorkspaceStore();

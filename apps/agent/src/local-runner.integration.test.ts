@@ -8,7 +8,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
-import { Events } from "@puchero/domain";
+import { Events } from "@caldero/domain";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { makeFakeGitHub } from "./fake-github.ts";
 import { openLocalIssue } from "./local-runner.ts";
@@ -17,7 +17,7 @@ import { localWatchIssueError } from "./local-watch.ts";
 
 const repo = { owner: "acme", name: "app" };
 const directory = Effect.acquireRelease(
-  Effect.promise(() => mkdtemp(join(tmpdir(), "puchero-local-run-"))),
+  Effect.promise(() => mkdtemp(join(tmpdir(), "caldero-local-run-"))),
   (root) => Effect.promise(() => rm(root, { recursive: true, force: true })),
 );
 
@@ -217,14 +217,14 @@ describe("Local durable runner", () => {
       Effect.gen(function* () {
         yield* Effect.acquireRelease(
           Effect.sync(() => {
-            const previous = process.env.PUCHERO_TEST_HOST_ONLY;
-            process.env.PUCHERO_TEST_HOST_ONLY = "host-only-canary";
+            const previous = process.env.CALDERO_TEST_HOST_ONLY;
+            process.env.CALDERO_TEST_HOST_ONLY = "host-only-canary";
             return previous;
           }),
           (previous) =>
             Effect.sync(() => {
-              if (previous === undefined) delete process.env.PUCHERO_TEST_HOST_ONLY;
-              else process.env.PUCHERO_TEST_HOST_ONLY = previous;
+              if (previous === undefined) delete process.env.CALDERO_TEST_HOST_ONLY;
+              else process.env.CALDERO_TEST_HOST_ONLY = previous;
             }),
         );
         const stateDir = yield* directory;
@@ -241,7 +241,7 @@ describe("Local durable runner", () => {
             repo,
             issue: 7,
             stateDir,
-            checks: ['test -f notes.txt && test -z "${PUCHERO_TEST_HOST_ONLY+x}"'],
+            checks: ['test -f notes.txt && test -z "${CALDERO_TEST_HOST_ONLY+x}"'],
             pi: { ...scripted, thinkingLevel: "medium" },
           }).pipe(Effect.provide(github.layer));
         const first = yield* Effect.scoped(

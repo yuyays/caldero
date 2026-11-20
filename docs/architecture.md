@@ -1,13 +1,13 @@
-# Puchero architecture
+# Caldero architecture
 
 This is the current architecture overview. Start here for what exists, what runs
 locally, and what remains future work. Operational commands live in the
 [agent guide](../apps/agent/README.md); detailed designs are linked below.
 
-Puchero turns an issue in one configured GitHub repository into code changes,
+Caldero turns an issue in one configured GitHub repository into code changes,
 runs configured checks against a frozen candidate, and opens a PR when they pass.
 Review and merging happen on GitHub. There is no pre-publication approval mode
-and Puchero never merges automatically.
+and Caldero never merges automatically.
 
 ## Implementation and deployment status
 
@@ -94,15 +94,15 @@ flowchart TD
 
 [`local-cli.ts`](../apps/agent/src/local-cli.ts) loads the installed Pi profile
 through Pi's official `ModelRuntime` and `SettingsManager`. Pi owns credential
-refresh and persistence. Puchero retains its own durable tools and task context;
+refresh and persistence. Caldero retains its own durable tools and task context;
 interactive Pi skills, extensions and prompts are not imported.
 
 [`local-watch.ts`](../apps/agent/src/local-watch.ts) records pending issues before
 opening them and saves settlement receipts to avoid repeated terminal work.
 [`local-runner.ts`](../apps/agent/src/local-runner.ts) owns each issue's SQLite,
 workspace and kernel lock. Default state is under
-`~/.local/state/puchero/OWNER/REPO/ISSUE`; watch receipts sit in the repository state
-directory, `~/.local/state/puchero/OWNER/REPO`. Returning to the same issue state
+`~/.local/state/caldero/OWNER/REPO/ISSUE`; watch receipts sit in the repository state
+directory, `~/.local/state/caldero/OWNER/REPO`. Returning to the same issue state
 directory resumes its saved session. `pnpm retry --issue N --check COMMAND` explicitly
 retries a failed session through the same durable core: failed edits/checks start a
 new run; failed publication reconciles its existing candidate. See [retry](design/local-retry.md).

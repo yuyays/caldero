@@ -1,7 +1,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { SessionFault, type SessionView } from "@puchero/contracts/inbox";
+import { SessionFault, type SessionView } from "@caldero/contracts/inbox";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { SessionReview } from "./inbox.js";
 import { detailQuery } from "../lib/inbox.js";

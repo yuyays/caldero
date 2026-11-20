@@ -1,4 +1,4 @@
-import type { Repo } from "@puchero/domain";
+import type { Repo } from "@caldero/domain";
 
 /** The issue encoded in the canonical named DO; stored metadata never supplies this expectation. */
 export const sessionIssue = (repo: Repo, name: string | undefined): number | undefined => {

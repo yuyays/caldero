@@ -82,7 +82,7 @@ Policy, approval and queuing rules interact, so they stay in one module. **Test 
 **Interface:** `deliver(event & { eventId })` (idempotent per `eventId`) and `view()`.
 
 - **State:** reducer state, processed `eventId`s, and the instruction journal live in a Pi document
-  (`puchero.session`). `deliver` runs `decide` and commits, in **one** `root.commit()`: the dedupe record, new
+  (`caldero.session`). `deliver` runs `decide` and commits, in **one** `root.commit()`: the dedupe record, new
   state, new instructions as Pi tasks, and any Pi input admission (`submit(tx, draft)`, with
   `requestId = instructionId`). The Worker acknowledges the webhook only after that commit.
 - **Alarm:** Pi owns it (spike). Activation and alarm arm, then `resume()`.
@@ -149,7 +149,7 @@ interface GitHub {
   the next. Binary files go as base64 blobs, deletions as tree entries with `sha: null`, modes preserved.
   `base_tree` is the **tree SHA** of `baseSha`. Commit metadata (author, committer, dates, message) is frozen in the
   publish journal before the first request, so a retry produces the same commit SHA.
-- **Reconciliation** checks the branch `puchero/<issue>-v<version>` against the journaled commit SHA, then searches
+- **Reconciliation** checks the branch `caldero/<issue>-v<version>` against the journaled commit SHA, then searches
   open **and closed** PRs from that branch. A branch at the expected commit without a PR resumes at the `pr` stage;
   a branch at a different commit fails as `permanent` ("branch conflict"). A 422 counts as success only after
   reconciliation confirms the expected state.
@@ -188,7 +188,7 @@ Against `alchemy dev` with `LocalWorkspace` or the container, `FakeGitHub`, and 
 1. Labeling an issue `agent` creates exactly one session; redelivering the same delivery ID changes nothing.
 2. A session reaches `awaitingApproval` only after validation passes; the inbox shows the patch, digest, base SHA
    and validation output.
-3. Publishing (automatically in auto, after approval in observe) opens exactly one PR on `puchero/<issue>-v<version>`,
+3. Publishing (automatically in auto, after approval in observe) opens exactly one PR on `caldero/<issue>-v<version>`,
    the session becomes `published`, and the issue
    gets exactly one linking comment.
 4. A patch with a binary file, a deletion, and a mode change round-trips into the PR unchanged.
@@ -239,7 +239,7 @@ from its storage and ports, then opening the next. Changes from the design above
 - **`Submit` runs as a task too.** A start prepares the workspace first (a failure becomes `RunFailed`), and the
   admission commit re-checks the run: an obsolete start is dropped, and a steer that missed its run is decided again
   as `UserInput`. No instruction is admitted inside `deliver`'s commit.
-- **Run end.** `afterRun` asks for a `RunAnswered` task, which waits while puchero input is queued behind the run.
+- **Run end.** `afterRun` asks for a `RunAnswered` task, which waits while caldero input is queued behind the run.
   A failed run is found from `pi.live.runFailure` (its inputs map to their run) and reported in a commit: at open,
   on `resume`, on every `pi.live` change, and inside every input admission, so new input cannot hide it. Because a failed run may leave no task to wake the object, the DO shell must keep a heartbeat
   alarm while the session is `running` or `validating`.
@@ -263,7 +263,7 @@ Effects; invocation cancellation flows into Pi contexts, environment calls and t
 
 - **Recovery journal.** `Workspace.env(recovery)` accepts Pi journal callbacks, keeping boot detection and restoration
   inside the workspace. The host binds this once when opening; checkpoint and validation also check the guard. The
-  separate `puchero.workspace` Pi document holds the last boot ID and `{ number, digest }` checkpoint pointer.
+  separate `caldero.workspace` Pi document holds the last boot ID and `{ number, digest }` checkpoint pointer.
   Only a changed `/workspace/.boot` means reset; opening another DO process with the same marker preserves its disk.
   Restore commits the new boot ID and the required steer in one transaction. Before the first checkpoint, reset
   restores the base and names it checkpoint 0.
@@ -304,7 +304,7 @@ sandbox; each operation mints a fresh token restricted to the configured reposit
   approve its new candidate; automatic rebase/re-proposal is outside this milestone. A race between the two base
   checks may leave an unused branch, which the adapter never deletes. This is a schema change: use a fresh development session rather than loading old
   sessions without `baseRef`.
-- **Publish journal:** SessionHost supplies read/save callbacks backed by the `puchero.publish` Pi document. Entries
+- **Publish journal:** SessionHost supplies read/save callbacks backed by the `caldero.publish` Pi document. Entries
   are keyed by candidate version and verify the full binding and issue. Intent metadata, base tree, the complete blob
   map, tree, commit, reference and PR receipts each commit before advancing. Interrupted uploads may leave unreachable
   Git objects; replay uses the same content and commit metadata. No credentials or patch payloads enter the journal.

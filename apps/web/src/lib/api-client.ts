@@ -1,6 +1,6 @@
 import { FetchHttpClient } from "effect/http";
 import { HttpApiClient } from "effect/http-api";
-import { StarterApi } from "@puchero/contracts/http";
+import { StarterApi } from "@caldero/contracts/http";
 import { Effect } from "effect";
 
 const baseUrl = import.meta.env.VITE_API_URL ?? "";

@@ -7,7 +7,7 @@ export const SessionDoc = defineDoc<{
   runs: Record<string, number>;
   tasks?: Array<TaskId>;
 }>({
-  kind: "puchero.session",
+  kind: "caldero.session",
   version: 1,
   scope: "session",
   initial: () => ({ state: "", seen: {}, runs: {}, tasks: [] }),

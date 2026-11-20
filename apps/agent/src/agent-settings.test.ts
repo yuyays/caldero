@@ -10,11 +10,11 @@ describe("Agent configuration", () => {
     () =>
       Effect.gen(function* () {
         const production = {
-          PUCHERO_ORIGIN: "https://inbox.example.com",
-          PUCHERO_REPO_OWNER: "team",
-          PUCHERO_REPO_NAME: "product",
+          CALDERO_ORIGIN: "https://inbox.example.com",
+          CALDERO_REPO_OWNER: "team",
+          CALDERO_REPO_NAME: "product",
           GITHUB_INSTALLATION_ID: "123",
-          PUCHERO_CHECKS: '["pnpm test"]',
+          CALDERO_CHECKS: '["pnpm test"]',
           GITHUB_WEBHOOK_SECRET: "secret",
           ACCESS_ISSUER: "https://team.cloudflareaccess.com",
           ACCESS_AUDIENCE: "inbox",
@@ -25,16 +25,16 @@ describe("Agent configuration", () => {
           installationId: 123,
           checks: ["pnpm test"],
         });
-        expect(yield* settings({ ...production, PUCHERO_POLICY: "off" })).toMatchObject({
+        expect(yield* settings({ ...production, CALDERO_POLICY: "off" })).toMatchObject({
           repo: { owner: "team", name: "product" },
           installationId: 123,
           checks: ["pnpm test"],
         });
         for (const key of [
-          "PUCHERO_REPO_OWNER",
-          "PUCHERO_REPO_NAME",
+          "CALDERO_REPO_OWNER",
+          "CALDERO_REPO_NAME",
           "GITHUB_INSTALLATION_ID",
-          "PUCHERO_CHECKS",
+          "CALDERO_CHECKS",
         ]) {
           const missing = Object.fromEntries(
             Object.entries(production).filter(([name]) => name !== key),
@@ -44,7 +44,7 @@ describe("Agent configuration", () => {
           });
         }
         expect(
-          yield* settings({ ...production, PUCHERO_CHECKS: '["   "]' }).pipe(Effect.flip),
+          yield* settings({ ...production, CALDERO_CHECKS: '["   "]' }).pipe(Effect.flip),
         ).toMatchObject({ _tag: "InboxUnavailable" });
       }),
   );
@@ -54,8 +54,8 @@ describe("Agent configuration", () => {
     () =>
       Effect.gen(function* () {
         const local = {
-          PUCHERO_MODE: "dev",
-          PUCHERO_DEV_TOKEN: "local",
+          CALDERO_MODE: "dev",
+          CALDERO_DEV_TOKEN: "local",
           GITHUB_WEBHOOK_SECRET: "fixture-secret",
         };
         expect(yield* settings(local)).toMatchObject({
@@ -63,9 +63,9 @@ describe("Agent configuration", () => {
         });
         for (const env of [
           {},
-          { ...local, PUCHERO_MODE: "production", PUCHERO_ORIGIN: "https://inbox.example.com" },
+          { ...local, CALDERO_MODE: "production", CALDERO_ORIGIN: "https://inbox.example.com" },
           { ...local, ACCESS_ISSUER: "https://team.cloudflareaccess.com" },
-          { ...local, PUCHERO_CHECKS: "[]" },
+          { ...local, CALDERO_CHECKS: "[]" },
         ]) {
           expect(yield* settings(env).pipe(Effect.flip)).toMatchObject({
             _tag: "InboxUnavailable",
@@ -73,12 +73,12 @@ describe("Agent configuration", () => {
         }
         expect(
           (yield* settings({
-            PUCHERO_REPO_OWNER: "owner",
-            PUCHERO_REPO_NAME: "repo",
+            CALDERO_REPO_OWNER: "owner",
+            CALDERO_REPO_NAME: "repo",
             GITHUB_INSTALLATION_ID: "12",
-            PUCHERO_CHECKS: '["pnpm test"]',
+            CALDERO_CHECKS: '["pnpm test"]',
             GITHUB_WEBHOOK_SECRET: "secret",
-            PUCHERO_ORIGIN: "https://inbox.example.com",
+            CALDERO_ORIGIN: "https://inbox.example.com",
             ACCESS_ISSUER: "https://team.cloudflareaccess.com",
             ACCESS_AUDIENCE: "inbox",
             ACCESS_APPROVERS: '{"ann@example.com":"ann"}',

@@ -1,4 +1,4 @@
-import { SessionFault } from "@puchero/contracts/inbox";
+import { SessionFault } from "@caldero/contracts/inbox";
 import { Effect, Exit, Schema, Scope, Semaphore } from "effect";
 import type { SessionHostError } from "./session-host.ts";
 

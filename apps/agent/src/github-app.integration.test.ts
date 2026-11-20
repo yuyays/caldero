@@ -159,7 +159,7 @@ const publisherPeer = () =>
               pr = {
                 number: 101,
                 html_url: "https://github.test/acme/app/pull/101",
-                head: { sha: "new-commit", ref: "puchero/7-v1" },
+                head: { sha: "new-commit", ref: "caldero/7-v1" },
                 base: { ref: "main" },
               };
               racePr = false;
@@ -169,7 +169,7 @@ const publisherPeer = () =>
               pr = {
                 number: 101,
                 html_url: "https://github.test/acme/app/pull/101",
-                head: { sha: "new-commit", ref: "puchero/7-v1" },
+                head: { sha: "new-commit", ref: "caldero/7-v1" },
                 base: { ref: "main" },
               };
               reply(pr);
@@ -216,7 +216,7 @@ const adapter = (apiUrl: string) =>
     privateKey,
     repo,
     apiUrl,
-    author: { name: "puchero", email: "bot@example.com" },
+    author: { name: "caldero", email: "bot@example.com" },
   });
 
 describe("GitHubApp", () => {
@@ -302,7 +302,7 @@ describe("GitHubApp", () => {
       const github = yield* adapter(http.url);
       yield* github.comment(repo, 7, "published:v1", "Opened PR").pipe(Effect.flip);
       yield* github.comment(repo, 7, "published:v1", "Opened PR");
-      expect(posted).toEqual([{ body: "Opened PR\n\n<!-- puchero:cHVibGlzaGVkOnYx -->" }]);
+      expect(posted).toEqual([{ body: "Opened PR\n\n<!-- caldero:cHVibGlzaGVkOnYx -->" }]);
     }),
   );
   for (const stage of ["blobs", "trees", "commits", "refs", "pulls"]) {
@@ -387,7 +387,7 @@ describe("GitHubApp", () => {
       const github = yield* adapter(http.url);
       expect(
         yield* github.publish(7, binding, patch, memoryJournal().journal).pipe(Effect.flip),
-      ).toMatchObject({ kind: "permanent", message: "branch conflict on puchero/7-v1" });
+      ).toMatchObject({ kind: "permanent", message: "branch conflict on caldero/7-v1" });
       expect(http.branch()).toBe("someone-else");
       expect(http.pr()).toBeNull();
     }),
@@ -437,7 +437,7 @@ describe("GitHubApp", () => {
               Array.from({ length: 100 }, () => ({ body: "context" })),
             );
           else if (path === "/repos/acme/app/issues/7/comments?per_page=100&page=2")
-            json(response, [{ body: "result\n\n<!-- puchero:cHVibGlzaGVkOnYx -->" }]);
+            json(response, [{ body: "result\n\n<!-- caldero:cHVibGlzaGVkOnYx -->" }]);
           else {
             posted.push(path);
             json(response, {}, 201);
@@ -489,9 +489,9 @@ describe("GitHubApp", () => {
         expect(http.posts.find((post) => post.path.endsWith("/git/commits"))?.body).toMatchObject({
           tree: "new-tree",
           parents: ["base-1"],
-          author: { name: "puchero", email: "bot@example.com", date: "1970-01-01T00:00:00.000Z" },
+          author: { name: "caldero", email: "bot@example.com", date: "1970-01-01T00:00:00.000Z" },
           committer: {
-            name: "puchero",
+            name: "caldero",
             email: "bot@example.com",
             date: "1970-01-01T00:00:00.000Z",
           },
@@ -544,7 +544,7 @@ describe("GitHubApp", () => {
           privateKey,
           repo,
           apiUrl: http.url,
-          author: { name: "puchero", email: "bot@example.com" },
+          author: { name: "caldero", email: "bot@example.com" },
         });
         const files = yield* github.fetchSource(repo, "base-1");
         expect(files.map((file) => ({ ...file, content: [...file.content] }))).toEqual([

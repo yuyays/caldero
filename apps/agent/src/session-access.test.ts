@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { SessionFault } from "@puchero/contracts/inbox";
+import { SessionFault } from "@caldero/contracts/inbox";
 import { Effect } from "effect";
 import { makeSessionAccess } from "./session-access.ts";
 import { SessionHostError } from "./session-host.ts";

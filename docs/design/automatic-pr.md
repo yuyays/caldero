@@ -2,7 +2,7 @@
 
 The agent makes the requested change, runs the configured sandbox checks, and opens a PR when they pass.
 There is no pre-publication approval mode or policy environment setting. Review and merging happen on GitHub;
-Puchero never merges automatically. GitHub CI may run after the PR opens.
+Caldero never merges automatically. GitHub CI may run after the PR opens.
 
 ## Approach
 
@@ -10,7 +10,7 @@ The domain reducer owns publication. A successful `Validated` event for the curr
 binding and validation evidence and atomically commits `publishing` plus one bound `Publish` instruction.
 Failed, repeated, and stale validation cannot start another publication. No synthetic human event or actor is recorded.
 
-All new sessions use this flow. `PUCHERO_POLICY` is removed from deployment settings, admission, and the inbox.
+All new sessions use this flow. `CALDERO_POLICY` is removed from deployment settings, admission, and the inbox.
 The approve/reject HTTP routes, client actions, and domain events are removed. The inbox shows progress, changes,
 validation evidence and the PR link; it retains additional instructions and Stop in eligible pre-publication states.
 

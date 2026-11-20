@@ -47,7 +47,7 @@ one entry per issue; no retention/compaction policy is introduced in this versio
 
 `--watch` is exclusive with `--issue`, `--state-dir` and `--check-connection`.
 `--poll-seconds` defaults to 60 and must be at least 1. `--state-root` selects the
-watch repository directory (default `~/.local/state/puchero/OWNER/REPO`), with issue
+watch repository directory (default `~/.local/state/caldero/OWNER/REPO`), with issue
 directories underneath. The single-issue `--state-dir` retains its existing meaning.
 For a custom watch root, single-issue recovery must use `--state-dir <root>/<issue>`
 to address that same session and lock.

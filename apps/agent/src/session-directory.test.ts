@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import { SessionFault } from "@puchero/contracts/inbox";
+import { SessionFault } from "@caldero/contracts/inbox";
 import { RpcCallError, encodeRpcError, makeRpcErrorReviver } from "alchemy/Rpc";
-import { Events } from "@puchero/domain";
+import { Events } from "@caldero/domain";
 import { Context, Effect } from "effect";
 import { makeSessionDirectory, type SessionPeer } from "./session-directory.ts";
 

@@ -1,4 +1,4 @@
-import { Repo } from "@puchero/domain";
+import { Repo } from "@caldero/domain";
 import { Schema } from "effect";
 
 export const LocalWatchReceipt = Schema.Struct({

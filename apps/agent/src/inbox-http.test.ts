@@ -5,8 +5,8 @@ import {
   InboxUnavailable,
   SessionFault,
   summarizeSession,
-} from "@puchero/contracts/inbox";
-import { decide, initialSession } from "@puchero/domain";
+} from "@caldero/contracts/inbox";
+import { decide, initialSession } from "@caldero/domain";
 import { Effect, Fiber, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import { HttpApiClient } from "effect/http-api";

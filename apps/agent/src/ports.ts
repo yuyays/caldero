@@ -1,7 +1,7 @@
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
-import type { Patch } from "@puchero/contracts/inbox";
-export { FileChange, Patch } from "@puchero/contracts/inbox";
-import { ApprovalBinding, type Repo, type SessionState } from "@puchero/domain";
+import type { Patch } from "@caldero/contracts/inbox";
+export { FileChange, Patch } from "@caldero/contracts/inbox";
+import { ApprovalBinding, type Repo, type SessionState } from "@caldero/domain";
 import { Context, type Effect, Schema } from "effect";
 
 /** A failure's message, for errors that cross into a typed error or a stored outcome. */
@@ -57,7 +57,7 @@ export class WorkspaceStore extends Context.Service<
     readonly put: (key: string, value: string) => Effect.Effect<void, WorkspaceError>;
     readonly get: (key: string) => Effect.Effect<string, WorkspaceError>;
   }
->()("puchero/WorkspaceStore") {}
+>()("caldero/WorkspaceStore") {}
 
 /**
  * The agent's sandbox for one session. Every method is idempotent: a task that crashed after calling it calls it again.
@@ -78,7 +78,7 @@ export class Workspace extends Context.Service<
     /** Stop every command still running in the workspace. */
     readonly quiesce: () => Effect.Effect<void, WorkspaceError>;
   }
->()("puchero/Workspace") {}
+>()("caldero/Workspace") {}
 
 export const PullRequest = Schema.Struct({ number: Schema.Int, url: Schema.String });
 export type PullRequest = typeof PullRequest.Type;
@@ -130,7 +130,7 @@ export type ReconcileResult =
 
 /** The branch a candidate is published on. */
 export const branchName = (issue: number, binding: ApprovalBinding) =>
-  `puchero/${issue}-v${binding.version}`;
+  `caldero/${issue}-v${binding.version}`;
 
 /** GitHub, as the session sees it. Publishing and commenting are idempotent per binding and key. */
 export class GitHub extends Context.Service<
@@ -162,7 +162,7 @@ export class GitHub extends Context.Service<
       text: string,
     ) => Effect.Effect<void, GitHubError>;
   }
->()("puchero/GitHub") {}
+>()("caldero/GitHub") {}
 
 export class ProjectionError extends Schema.TaggedError<ProjectionError>()("ProjectionError", {
   message: Schema.String,
@@ -177,4 +177,4 @@ export class Projection extends Context.Service<
       instructionId: string,
     ) => Effect.Effect<void, ProjectionError>;
   }
->()("puchero/Projection") {}
+>()("caldero/Projection") {}

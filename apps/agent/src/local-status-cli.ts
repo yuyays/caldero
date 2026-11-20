@@ -2,8 +2,8 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs, stripVTControlCharacters } from "node:util";
-import { LocalStatus } from "@puchero/contracts/local-status";
-import { Repo } from "@puchero/domain";
+import { LocalStatus } from "@caldero/contracts/local-status";
+import { Repo } from "@caldero/domain";
 import { Effect, Schema } from "effect";
 import { noPullRequestCi, readPullRequestCi } from "./local-ci-status.ts";
 import { collectLocalStatus, LocalStatusError } from "./local-status.ts";
@@ -23,13 +23,13 @@ const terminalText = (value: string) =>
     )
     .join("");
 const terminalLine = (value: string) => terminalText(value).replace(/\s+/g, " ");
-const help = `Read saved local Puchero status without starting an agent.
+const help = `Read saved local Caldero status without starting an agent.
 
-pnpm --filter @puchero/agent status [--issue NUMBER [--ci]] [--json]
+pnpm --filter @caldero/agent status [--issue NUMBER [--ci]] [--json]
 
 --repo OWNER/REPO      Repository identity instead of reading GitHub config
---github-config PATH  Read only repo identity (default ~/.config/puchero/github-app.json)
---state-root PATH     State root (default ~/.local/state/puchero/OWNER/REPO)
+--github-config PATH  Read only repo identity (default ~/.config/caldero/github-app.json)
+--state-root PATH     State root (default ~/.local/state/caldero/OWNER/REPO)
 --issue NUMBER        Inspect one issue, including saved validation evidence
 --ci                  Read the saved PR's current GitHub checks with gh (requires --issue)
 --json                Emit the full structured snapshot and saved evidence
@@ -131,7 +131,7 @@ const command = Effect.gen(function* () {
     repo = { owner: parts[0], name: parts[1] };
   } else {
     const configPath = resolve(
-      values["github-config"] ?? join(homedir(), ".config/puchero/github-app.json"),
+      values["github-config"] ?? join(homedir(), ".config/caldero/github-app.json"),
     );
     const text = yield* Effect.tryPromise({
       try: () => readFile(configPath, "utf8"),
@@ -152,7 +152,7 @@ const command = Effect.gen(function* () {
   const snapshot = yield* collectLocalStatus({
     repo,
     stateRoot: resolve(
-      values["state-root"] ?? join(homedir(), ".local/state/puchero", repo.owner, repo.name),
+      values["state-root"] ?? join(homedir(), ".local/state/caldero", repo.owner, repo.name),
     ),
     ...(issue === undefined ? {} : { issue }),
   }).pipe(

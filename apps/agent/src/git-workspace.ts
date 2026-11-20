@@ -15,7 +15,7 @@ import {
 } from "./ports.ts";
 
 const background = BACKGROUND_CONTEXT;
-const author = ["-c", "user.name=puchero", "-c", "user.email=puchero@localhost"];
+const author = ["-c", "user.name=caldero", "-c", "user.email=caldero@localhost"];
 const decodePatch = Schema.decodeUnknownEffect(Schema.fromJsonString(Patch));
 const filesJson = Schema.fromJsonString(Schema.Array(FileChange));
 const decodeFiles = Schema.decodeUnknownEffect(filesJson);
@@ -53,7 +53,7 @@ export const makeGitWorkspace = Effect.fn("makeGitWorkspace")(function* (options
   // One validation at a time: each stages the whole index.
   const validating = yield* Semaphore.make(1);
   const work = `${root}/work`;
-  const marker = `${work}/.git/puchero-base`;
+  const marker = `${work}/.git/caldero-base`;
 
   const call = <A>(
     operation: (

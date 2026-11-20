@@ -13,15 +13,15 @@ const required = (name: string) => {
 };
 
 /** Explicit opt-in only: creates a branch and PR in the configured scratch repository, and leaves them for inspection. */
-describe.skipIf(process.env.PUCHERO_GITHUB_CONTRACT !== "1")("GitHub App live contract", () => {
+describe.skipIf(process.env.CALDERO_GITHUB_CONTRACT !== "1")("GitHub App live contract", () => {
   it.live(
     "publishes via installation credentials, verifies the files, and reconciles to the same PR",
     () =>
       Effect.gen(function* () {
-        const owner = required("PUCHERO_GITHUB_OWNER");
-        const name = required("PUCHERO_GITHUB_REPO");
-        const issue = Number(required("PUCHERO_GITHUB_ISSUE"));
-        const installationId = Number(required("PUCHERO_GITHUB_INSTALLATION_ID"));
+        const owner = required("CALDERO_GITHUB_OWNER");
+        const name = required("CALDERO_GITHUB_REPO");
+        const issue = Number(required("CALDERO_GITHUB_ISSUE"));
+        const installationId = Number(required("CALDERO_GITHUB_INSTALLATION_ID"));
         if (
           !Number.isSafeInteger(issue) ||
           issue <= 0 ||
@@ -31,7 +31,7 @@ describe.skipIf(process.env.PUCHERO_GITHUB_CONTRACT !== "1")("GitHub App live co
           return yield* new GitHubError({
             message: "Issue and installation ID must be positive integers",
           });
-        const journalPath = required("PUCHERO_GITHUB_JOURNAL_FILE");
+        const journalPath = required("CALDERO_GITHUB_JOURNAL_FILE");
         const ioError = () =>
           new GitHubError({ message: "Could not read credentials or retain the contract journal" });
         const existing = yield* Effect.tryPromise({
@@ -57,12 +57,12 @@ describe.skipIf(process.env.PUCHERO_GITHUB_CONTRACT !== "1")("GitHub App live co
         const options = {
           repo,
           installationId,
-          appId: required("PUCHERO_GITHUB_APP_ID"),
+          appId: required("CALDERO_GITHUB_APP_ID"),
           privateKey: yield* Effect.tryPromise({
-            try: () => readFile(required("PUCHERO_GITHUB_PRIVATE_KEY_FILE"), "utf8"),
+            try: () => readFile(required("CALDERO_GITHUB_PRIVATE_KEY_FILE"), "utf8"),
             catch: ioError,
           }),
-          author: { name: "puchero contract", email: "puchero-contract@users.noreply.github.com" },
+          author: { name: "caldero contract", email: "caldero-contract@users.noreply.github.com" },
         };
         const github = yield* GitHubApp.make(options);
         const context = yield* github.fetchIssueContext(repo, issue);
@@ -70,13 +70,13 @@ describe.skipIf(process.env.PUCHERO_GITHUB_CONTRACT !== "1")("GitHub App live co
           progress?.binding.version ?? Number.parseInt(randomUUID().slice(0, 8), 16) + 1;
         const changes: Patch["files"] = [
           {
-            path: `.puchero-contract/${version}/binary.bin`,
+            path: `.caldero-contract/${version}/binary.bin`,
             change: "write",
             content: "AP8B/g==",
             executable: false,
           },
           {
-            path: `.puchero-contract/${version}/run.sh`,
+            path: `.caldero-contract/${version}/run.sh`,
             change: "write",
             content: "IyEvYmluL3NoCg==",
             executable: true,
@@ -117,11 +117,11 @@ describe.skipIf(process.env.PUCHERO_GITHUB_CONTRACT !== "1")("GitHub App live co
           return yield* new GitHubError({ message: "No committed publication receipt" });
         const files = yield* github.fetchSource(repo, saved.commitSha);
         expect(
-          files.find((file) => file.path === `.puchero-contract/${binding.version}/binary.bin`)
+          files.find((file) => file.path === `.caldero-contract/${binding.version}/binary.bin`)
             ?.content,
         ).toEqual(new Uint8Array([0, 255, 1, 254]));
         expect(
-          files.find((file) => file.path === `.puchero-contract/${binding.version}/run.sh`)
+          files.find((file) => file.path === `.caldero-contract/${binding.version}/run.sh`)
             ?.executable,
         ).toBe(true);
         const next = yield* GitHubApp.make(options);

@@ -1,5 +1,5 @@
 {
-  "name": "@puchero/api",
+  "name": "@caldero/api",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -21,8 +21,8 @@
     "pg": "^8.23.1"
   },
   "devDependencies": {
+    "@caldero/contracts": "workspace:*",
     "@effect/vitest": "catalog:",
-    "@puchero/contracts": "workspace:*",
     "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",
     "drizzle-kit": "1.0.0-rc.5",

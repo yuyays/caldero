@@ -5,7 +5,7 @@ import {
   fauxProvider,
   fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
-import type { SessionState } from "@puchero/domain";
+import type { SessionState } from "@caldero/domain";
 import { Effect, Layer } from "effect";
 import { Projection } from "./ports.ts";
 

@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import { InboxForbidden, InboxUnauthorized, InboxUnavailable } from "@puchero/contracts/inbox";
+import { InboxForbidden, InboxUnauthorized, InboxUnavailable } from "@caldero/contracts/inbox";
 import { Context, DateTime, Effect } from "effect";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
@@ -19,7 +19,7 @@ export class InboxAuth extends Context.Service<
       headers: Readonly<Record<string, string>>,
     ) => Effect.Effect<{ readonly login: string }, InboxUnauthorized | InboxForbidden>;
   }
->()("puchero/InboxAuth") {}
+>()("caldero/InboxAuth") {}
 
 /** Explicit dev mode is the only path accepting a static token. Access identity comes only from verified claims. */
 export const makeInboxAuth = Effect.fn("makeInboxAuth")(function* (options: AuthOptions) {

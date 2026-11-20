@@ -11,7 +11,7 @@ import { GitHubError } from "./ports.ts";
 
 const repo = { owner: "acme", name: "app" };
 const directory = Effect.acquireRelease(
-  Effect.promise(() => mkdtemp(join(tmpdir(), "puchero-watch-"))),
+  Effect.promise(() => mkdtemp(join(tmpdir(), "caldero-watch-"))),
   (root) => Effect.promise(() => rm(root, { recursive: true, force: true })),
 );
 

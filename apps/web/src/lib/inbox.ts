@@ -7,7 +7,7 @@ import {
   SessionFault,
   InboxUnavailable,
   type SessionView,
-} from "@puchero/contracts/inbox";
+} from "@caldero/contracts/inbox";
 import { Effect, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { HttpApiClient } from "effect/http-api";

@@ -1,5 +1,5 @@
 {
-  "name": "@puchero/contracts",
+  "name": "@caldero/contracts",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -15,7 +15,7 @@
     "test": "vp test run"
   },
   "dependencies": {
-    "@puchero/domain": "workspace:*",
+    "@caldero/domain": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

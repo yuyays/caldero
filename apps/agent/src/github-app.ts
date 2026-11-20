@@ -1,5 +1,5 @@
 import { createPrivateKey, sign } from "node:crypto";
-import type { ApprovalBinding, Repo } from "@puchero/domain";
+import type { ApprovalBinding, Repo } from "@caldero/domain";
 import { Clock, DateTime, Effect, Layer, Result, Schema } from "effect";
 import { Base64 } from "effect/encoding";
 import {
@@ -139,7 +139,7 @@ const request = Effect.fn("GitHubApp.request")(function* (
           Accept: "application/vnd.github+json",
           Authorization: `Bearer ${token}`,
           "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "puchero",
+          "User-Agent": "caldero",
           "Content-Type": "application/json",
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -367,7 +367,7 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
       text: string,
     ) {
       const api = yield* client(repo);
-      const marker = `<!-- puchero:${Buffer.from(key).toString("base64url")} -->`;
+      const marker = `<!-- caldero:${Buffer.from(key).toString("base64url")} -->`;
       if (
         (yield* comments(api, issue)).some((comment) => comment.body.split("\n").includes(marker))
       )
@@ -441,7 +441,7 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
           binding,
           issue,
           author: { ...options.author, date },
-          message: `puchero: issue #${issue} version ${binding.version}\n\nPatch: ${binding.patchDigest}`,
+          message: `caldero: issue #${issue} version ${binding.version}\n\nPatch: ${binding.patchDigest}`,
           title: `Resolve #${issue} (agent v${binding.version})`,
           body: `Closes #${issue}\n\nValidated patch: ${binding.patchDigest}\nBase: ${binding.baseRef} at ${binding.baseSha}`,
           baseTree: null,

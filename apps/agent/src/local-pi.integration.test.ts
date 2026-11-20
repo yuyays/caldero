@@ -14,7 +14,7 @@ const profile = Effect.fn("fixturePiProfile")(function* (
   credential: Credential = { type: "api_key", key: "fixture-only-no-network" },
 ) {
   const root = yield* Effect.acquireRelease(
-    Effect.promise(() => mkdtemp(join(tmpdir(), "puchero-pi-"))),
+    Effect.promise(() => mkdtemp(join(tmpdir(), "caldero-pi-"))),
     (path) => Effect.promise(() => rm(path, { recursive: true, force: true })),
   );
   yield* Effect.promise(async () => {

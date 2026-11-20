@@ -1,4 +1,4 @@
-import { AuditEntry, SessionSummary, summarizeSession } from "@puchero/contracts/inbox";
+import { AuditEntry, SessionSummary, summarizeSession } from "@caldero/contracts/inbox";
 import { Context, Effect, Schema } from "effect";
 import { Projection, ProjectionError } from "./ports.ts";
 
@@ -10,7 +10,7 @@ export class InboxStore extends Context.Service<
       sessionId: string,
     ) => Effect.Effect<ReadonlyArray<AuditEntry>, ProjectionError>;
   }
->()("puchero/InboxStore") {}
+>()("caldero/InboxStore") {}
 
 /** The D1 surface this adapter uses; SQLite peers exercise the same SQL in contract tests. */
 export interface IndexStatement {

@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import Agent from "./src/worker.ts";
 
 export default Alchemy.Stack(
-  "PucheroAgent",
+  "CalderoAgent",
   { providers: Cloudflare.providers(), state: Alchemy.localState() },
   Effect.gen(function* () {
     const agent = yield* Agent;

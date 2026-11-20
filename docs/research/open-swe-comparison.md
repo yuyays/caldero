@@ -1,7 +1,7 @@
 2026-11-14
 Assessment, not an approved plan.
 
-# Open SWE compared with puchero
+# Open SWE compared with caldero
 
 ## 1. Architecture and evidence
 
@@ -15,9 +15,9 @@ Coding threads reuse Linux sandboxes. Unlike the announcement's automatic recrea
 
 ## 2. Layer comparison
 
-Puchero entries describe the supplied proposal, not verified implementation.
+Caldero entries describe the supplied proposal, not verified implementation.
 
-| Layer           | Open SWE / current Robin                                                    | Puchero                                                                                             |
+| Layer           | Open SWE / current Robin                                                    | Caldero                                                                                             |
 | --------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | Hosting         | Python backend, LangGraph/MDA; PostgreSQL/Redis [1]                         | Effect v4 TypeScript; Cloudflare/Alchemy v2; `alchemy dev` with workerd/Docker; no PostgreSQL       |
 | Intake          | Slack, Linear, GitHub channels; logged deliveries [2]                       | Worker signature verification, delivery dedupe, durable admission; inbox API/React SPA; Slack later |
@@ -34,7 +34,7 @@ Sources: [1][install]; [2][channel]; [3][store]; [4][loop]; [5][sandbox]; [6][pr
 
 - **Hydrate context before execution:** ticket history, repository instructions, base SHA, and trigger provenance. Preserve conversation identity across surfaces; avoid parallel sessions accidentally fixing the same PR. This follows the [announcement's context/thread approach](https://www.langchain.com/blog/open-swe-an-open-source-framework-for-internal-coding-agents).
 - **Keep required steps deterministic:** validation evidence, approval checks, publication, and status updates belong around the model loop. Borrow the separation in [`mda/rt/loop.py`][loop], not its entire orchestration stack.
-- **Make publication failures actionable:** record repository, branch, credential actor, failed stage, and GitHub response. Robin preflights access and branches, and finds existing PRs after a 422; puchero should reconcile ambiguous transport failures too ([`openswe/tools/open_pull_request.py`][pr]).
+- **Make publication failures actionable:** record repository, branch, credential actor, failed stage, and GitHub response. Robin preflights access and branches, and finds existing PRs after a 422; caldero should reconcile ambiguous transport failures too ([`openswe/tools/open_pull_request.py`][pr]).
 
 ## 4. Deliberate differences
 
@@ -42,9 +42,9 @@ Sources: [1][install]; [2][channel]; [3][store]; [4][loop]; [5][sandbox]; [6][pr
 
 **Secret-free sandboxes and approval-bound App publication are justified.** They establish a narrower write boundary than Robin's documented shared-trust environment. Repository checkout still needs an authorized broker; withholding secrets alone does not prevent network exfiltration.
 
-**Per-mutation R2 persistence is justified but expensive and incomplete alone.** Robin's refusal to replace unreachable workspaces confirms the loss problem; it does not prove puchero's checkpoint protocol solves it.
+**Per-mutation R2 persistence is justified but expensive and incomplete alone.** Robin's refusal to replace unreachable workspaces confirms the loss problem; it does not prove caldero's checkpoint protocol solves it.
 
-**CI as new runs and deferred previews look reasonable.** Preserve causal links and validation SHA. [Stripe Minions](https://stripe.dev/blog/minions-stripes-one-shot-end-to-end-coding-agents) provides secondary support for deterministic validation and CI feedback, not evidence for puchero's runtime choices.
+**CI as new runs and deferred previews look reasonable.** Preserve causal links and validation SHA. [Stripe Minions](https://stripe.dev/blog/minions-stripes-one-shot-end-to-end-coding-agents) provides secondary support for deterministic validation and CI feedback, not evidence for caldero's runtime choices.
 
 ## 5. Exposed gaps and risks
 

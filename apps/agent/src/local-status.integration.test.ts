@@ -13,11 +13,11 @@ import { openLocalIssue } from "./local-runner.ts";
 import { collectLocalStatus } from "./local-status.ts";
 import { scriptedModels } from "./testing.ts";
 import { openLocalWatcher } from "./local-watch.ts";
-import { LocalStatus } from "@puchero/contracts/local-status";
+import { LocalStatus } from "@caldero/contracts/local-status";
 
 const repo = { owner: "acme", name: "app" };
 const directory = Effect.acquireRelease(
-  Effect.promise(() => mkdtemp(join(tmpdir(), "puchero-status-"))),
+  Effect.promise(() => mkdtemp(join(tmpdir(), "caldero-status-"))),
   (root) => Effect.promise(() => rm(root, { recursive: true, force: true })),
 );
 
@@ -451,7 +451,7 @@ describe("Read-only local status", () => {
       yield* Effect.acquireUseRelease(
         Effect.sync(() => {
           const previous = process.env.PATH;
-          process.env.PATH = "/nonexistent/puchero-status-test";
+          process.env.PATH = "/nonexistent/caldero-status-test";
           return previous;
         }),
         () =>

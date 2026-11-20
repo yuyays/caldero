@@ -1,6 +1,6 @@
-import type { SessionView } from "@puchero/contracts/inbox";
-import { InboxUnavailable, SessionFault } from "@puchero/contracts/inbox";
-import type { DecisionResult, Repo, SessionEvent } from "@puchero/domain";
+import type { SessionView } from "@caldero/contracts/inbox";
+import { InboxUnavailable, SessionFault } from "@caldero/contracts/inbox";
+import type { DecisionResult, Repo, SessionEvent } from "@caldero/domain";
 import { type Context, Cause, Effect } from "effect";
 import { RpcCallError } from "alchemy/Rpc";
 import { sessionIssue } from "./session-identity.ts";

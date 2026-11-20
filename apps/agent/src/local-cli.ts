@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { Events, Repo } from "@puchero/domain";
+import { Events, Repo } from "@caldero/domain";
 import { Effect, Schema } from "effect";
 import { GitHubApp } from "./github-app.ts";
 import { openLocalPi } from "./local-pi.ts";
@@ -26,20 +26,20 @@ const decodeGitHub = Schema.decodeUnknownEffect(
   ),
 );
 
-const help = `Puchero with this machine's Pi login and saved model settings.
+const help = `Caldero with this machine's Pi login and saved model settings.
 
-pnpm --filter @puchero/agent local --issue NUMBER --check 'COMMAND' [--check 'COMMAND']
+pnpm --filter @caldero/agent local --issue NUMBER --check 'COMMAND' [--check 'COMMAND']
 pnpm retry --issue NUMBER --check COMMAND [--check COMMAND]
-pnpm --filter @puchero/agent local --watch --check 'COMMAND' [--check 'COMMAND']
+pnpm --filter @caldero/agent local --watch --check 'COMMAND' [--check 'COMMAND']
 
---github-config PATH   GitHub App config (default ~/.config/puchero/github-app.json)
+--github-config PATH   GitHub App config (default ~/.config/caldero/github-app.json)
 --pi-dir PATH          Pi profile directory (default Pi's configured agent directory)
---state-dir PATH       Durable state (default ~/.local/state/puchero/OWNER/REPO/ISSUE)
+--state-dir PATH       Durable state (default ~/.local/state/caldero/OWNER/REPO/ISSUE)
 --retry                Explicitly retry an existing failed session (pnpm retry)
 --watch                Poll labeled issues, one at a time; resume admitted work on restart
 --label NAME           Watch label (default agent)
 --poll-seconds N       Delay between watch scans (default 60)
---state-root PATH      Watch state root (default ~/.local/state/puchero/OWNER/REPO)
+--state-root PATH      Watch state root (default ~/.local/state/caldero/OWNER/REPO)
 --check-connection     Verify Pi login and model without starting an issue
 --help                Show this help
 
@@ -124,7 +124,7 @@ const command = Effect.gen(function* () {
   );
   if (values["check-connection"]) return yield* Effect.void;
   const configPath = resolve(
-    values["github-config"] ?? join(homedir(), ".config/puchero/github-app.json"),
+    values["github-config"] ?? join(homedir(), ".config/caldero/github-app.json"),
   );
   const configText = yield* Effect.tryPromise({
     try: () => readFile(configPath, "utf8"),
@@ -141,12 +141,12 @@ const command = Effect.gen(function* () {
   const github = yield* GitHubApp.make({
     ...config,
     privateKey,
-    author: { name: "puchero", email: "puchero@users.noreply.github.com" },
+    author: { name: "caldero", email: "caldero@users.noreply.github.com" },
   });
   if (values.watch) {
     const stateRoot = resolve(
       values["state-root"] ??
-        join(homedir(), ".local/state/puchero", config.repo.owner, config.repo.name),
+        join(homedir(), ".local/state/caldero", config.repo.owner, config.repo.name),
     );
     const watcher = yield* openLocalWatcher({
       repo: config.repo,
@@ -190,7 +190,7 @@ const command = Effect.gen(function* () {
   }
   const stateDir = resolve(
     values["state-dir"] ??
-      join(homedir(), ".local/state/puchero", config.repo.owner, config.repo.name, String(issue)),
+      join(homedir(), ".local/state/caldero", config.repo.owner, config.repo.name, String(issue)),
   );
   const host = yield* openLocalIssue({
     repo: config.repo,

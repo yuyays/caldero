@@ -22,8 +22,8 @@ import {
   type ToolRegistration,
   type Wake,
 } from "@earendil-works/pi-durable";
-import { SessionFault, type SessionView } from "@puchero/contracts/inbox";
-export type { SessionView } from "@puchero/contracts/inbox";
+import { SessionFault, type SessionView } from "@caldero/contracts/inbox";
+export type { SessionView } from "@caldero/contracts/inbox";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import {
   type DecisionResult,
@@ -33,7 +33,7 @@ import {
   Instruction,
   type SessionEvent,
   SessionState,
-} from "@puchero/domain";
+} from "@caldero/domain";
 import { Cause, Clock, Effect, Exit, Result, Schema } from "effect";
 import { SessionDoc } from "./session-document.ts";
 import {
@@ -65,11 +65,11 @@ const decodeState = (json: string) => {
 };
 const encodeState = Schema.encodeSync(stateJson);
 
-/** The kind of the transcript entry every puchero input is placed as; its data names the run it belongs to. */
-const inputKind = "puchero.input";
+/** The kind of the transcript entry every caldero input is placed as; its data names the run it belongs to. */
+const inputKind = "caldero.input";
 
 const WorkspaceDoc = defineDoc<{ bootId: string | null; checkpoint: Checkpoint | null }>({
-  kind: "puchero.workspace",
+  kind: "caldero.workspace",
   version: 1,
   scope: "session",
   initial: () => ({ bootId: null, checkpoint: null }),
@@ -81,7 +81,7 @@ const publishJson = Schema.fromJsonString(PublishProgress);
 const decodePublish = Schema.decodeSync(publishJson);
 const encodePublish = Schema.encodeSync(publishJson);
 const PublishDoc = defineDoc<{ entries: Record<string, string> }>({
-  kind: "puchero.publish",
+  kind: "caldero.publish",
   version: 1,
   scope: "session",
   initial: () => ({ entries: {} }),
@@ -262,7 +262,7 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
 
   /** Runs one instruction, then commits its outcome; a crash before that commit runs it again. */
   const Instructions = defineTask<Instruction, { phase: "run"; attempt: number }, null>({
-    name: "puchero.instruction",
+    name: "caldero.instruction",
     version: 1,
     initial: () => ({ phase: "run", attempt: 0 }),
     phases: {
@@ -395,7 +395,7 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
 
   /** Reports a run's answer to the session once the answer is committed. */
   const RunAnswered = defineTask<{ runId: number }, { phase: "report" }, null>({
-    name: "puchero.run-answered",
+    name: "caldero.run-answered",
     version: 1,
     initial: () => ({ phase: "report" }),
     phases: {
@@ -419,8 +419,8 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
     abort: (_task, runtime) => runtime.commit(() => aborted, context),
   });
 
-  const Puchero = defineExtension({
-    name: "puchero",
+  const Caldero = defineExtension({
+    name: "caldero",
     tasks: [Instructions, RunAnswered],
     wraps: codingTools.map((tool) =>
       wrapTool(tool, (original) => ({
@@ -470,7 +470,7 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
 
   const registry = createRegistry();
   registry.install(CodingTools);
-  registry.install(Puchero);
+  registry.install(Caldero);
 
   const environment = workspace.env({
     read: async (signal) => {
@@ -567,7 +567,7 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
       agent: {
         model: options.model,
         ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
-        extensions: [CodingTools, Puchero],
+        extensions: [CodingTools, Caldero],
       },
     }),
   );
@@ -591,7 +591,7 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
       let cursor;
       do {
         const page = await tx.scanTasks(
-          { kind: "puchero.run-answered", status: "terminal" },
+          { kind: "caldero.run-answered", status: "terminal" },
           100,
           cursor,
         );

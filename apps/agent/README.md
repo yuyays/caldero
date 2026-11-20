@@ -7,9 +7,9 @@ From the repository root:
 
 ```sh
 pnpm install
-pnpm --filter @puchero/web build
-PUCHERO_MODE=dev PUCHERO_DEV_TOKEN=local-check GITHUB_WEBHOOK_SECRET=fixture-secret \
-  sg docker -c 'pnpm --filter @puchero/agent dev'
+pnpm --filter @caldero/web build
+CALDERO_MODE=dev CALDERO_DEV_TOKEN=local-check GITHUB_WEBHOOK_SECRET=fixture-secret \
+  sg docker -c 'pnpm --filter @caldero/agent dev'
 ```
 
 Open http://localhost:1337 and enter `local-check` under “Local development token”. These example values are local
@@ -39,7 +39,7 @@ session they explicitly replace the old candidate with a fresh run.
 The unauthenticated `/s/:name/deliver` development route has been removed.
 
 `pnpm dev:web` supports frontend editing on port 5173, proxying `/api` to the agent on 1337. Set
-`PUCHERO_ORIGIN=http://localhost:5173` in the agent environment for that workflow. The built app uses the same origin
+`CALDERO_ORIGIN=http://localhost:5173` in the agent environment for that workflow. The built app uses the same origin
 as the Worker and needs no `VITE_API_URL`. Local tokens stay in page memory, never browser storage or build output.
 
 ## Production configuration (no deployment performed)
@@ -49,16 +49,16 @@ an explicit binding and marks credentials redacted. Keep secrets out of git and 
 
 | Setting                                   | Value                                                                           |
 | ----------------------------------------- | ------------------------------------------------------------------------------- |
-| `PUCHERO_ORIGIN`                          | Exact HTTPS inbox origin, no trailing slash                                     |
-| `PUCHERO_REPO_OWNER`, `PUCHERO_REPO_NAME` | One configured repository                                                       |
+| `CALDERO_ORIGIN`                          | Exact HTTPS inbox origin, no trailing slash                                     |
+| `CALDERO_REPO_OWNER`, `CALDERO_REPO_NAME` | One configured repository                                                       |
 | `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID` | Installed GitHub App identity                                                   |
 | `GITHUB_PRIVATE_KEY`                      | Secret PEM App key                                                              |
 | `GITHUB_WEBHOOK_SECRET`                   | Secret matching GitHub's webhook configuration                                  |
 | `ACCESS_ISSUER`                           | Team issuer, e.g. `https://team.cloudflareaccess.com`                           |
 | `ACCESS_AUDIENCE`                         | This Access application's audience                                              |
 | `ACCESS_APPROVERS`                        | JSON map of verified email to GitHub login, e.g. `{"ann@example.com":"ann"}`    |
-| `OPENAI_API_KEY`, `PUCHERO_MODEL`         | Secret API key and explicit OpenAI model ID                                     |
-| `PUCHERO_CHECKS`                          | Nonempty JSON array of validation commands baked into the sandbox's environment |
+| `OPENAI_API_KEY`, `CALDERO_MODEL`         | Secret API key and explicit OpenAI model ID                                     |
+| `CALDERO_CHECKS`                          | Nonempty JSON array of validation commands baked into the sandbox's environment |
 
 Configure an Access application for the inbox/API. Exclude `/webhooks/github` from Access so GitHub can reach it;
 the Worker authenticates that route with HMAC on the original bytes. Subscribe to issue events. Only `labeled`,
@@ -74,7 +74,7 @@ session's base. Acknowledgement waits for the durable admission commit; a lost r
 
 API identity comes only from a cryptographically verified Access JWT (RS256, issuer, audience, expiry/not-before).
 The email header and request-body actor are never trusted. Unmapped identities get 403; invalid tokens or JWKS
-failures get 401. All decisions require same-origin JSON. `PUCHERO_DEV_TOKEN` is accepted only in explicit dev mode
+failures get 401. All decisions require same-origin JSON. `CALDERO_DEV_TOKEN` is accepted only in explicit dev mode
 with no Access configuration. Missing production authentication, webhook or App/model configuration fails closed.
 
 Session detail degrades independently: a failed audit read returns an empty activity list with an unavailable flag,
@@ -127,14 +127,14 @@ The scratch repository must have a default branch, an issue, and no unsupported 
 Set these environment variables outside the sandbox:
 
 ```sh
-export PUCHERO_GITHUB_CONTRACT=1
-export PUCHERO_GITHUB_OWNER=your-owner
-export PUCHERO_GITHUB_REPO=your-scratch-repo
-export PUCHERO_GITHUB_ISSUE=1
-export PUCHERO_GITHUB_APP_ID=your-app-id
-export PUCHERO_GITHUB_INSTALLATION_ID=your-installation-id
-export PUCHERO_GITHUB_PRIVATE_KEY_FILE=/secure/path/app.pem
-export PUCHERO_GITHUB_JOURNAL_FILE=/secure/path/contract-journal.json
+export CALDERO_GITHUB_CONTRACT=1
+export CALDERO_GITHUB_OWNER=your-owner
+export CALDERO_GITHUB_REPO=your-scratch-repo
+export CALDERO_GITHUB_ISSUE=1
+export CALDERO_GITHUB_APP_ID=your-app-id
+export CALDERO_GITHUB_INSTALLATION_ID=your-installation-id
+export CALDERO_GITHUB_PRIVATE_KEY_FILE=/secure/path/app.pem
+export CALDERO_GITHUB_JOURNAL_FILE=/secure/path/contract-journal.json
 pnpm exec vp test run apps/agent/src/github-app.contract.integration.test.ts
 ```
 
@@ -147,15 +147,15 @@ also accepts `apiUrl` for GitHub Enterprise or a local contract peer; no credent
 On Linux (with `flock` from util-linux installed), the local entrypoint uses Pi's official `ModelRuntime` and `SettingsManager` SDK. It reuses your saved provider,
 model, reasoning level and login from Pi's agent directory (`~/.pi/agent` or `PI_CODING_AGENT_DIR`). OAuth refresh
 and credential locking are handled by Pi. You do not need another API key when the provider supports that login.
-The SDK version is pinned alongside Puchero's Pi Durable version.
+The SDK version is pinned alongside Caldero's Pi Durable version.
 
 ```sh
-pnpm --filter @puchero/agent local --check-connection
-pnpm --filter @puchero/agent local --issue 123 --check 'pnpm install --frozen-lockfile && pnpm test'
+pnpm --filter @caldero/agent local --check-connection
+pnpm --filter @caldero/agent local --issue 123 --check 'pnpm install --frozen-lockfile && pnpm test'
 ```
 
 Replace `123` and the checks with the issue and validation commands you intend to run. It reads the host-only
-GitHub App configuration at `~/.config/puchero/github-app.json`:
+GitHub App configuration at `~/.config/caldero/github-app.json`:
 
 ```json
 {
@@ -167,7 +167,7 @@ GitHub App configuration at `~/.config/puchero/github-app.json`:
 ```
 
 Use `--github-config`, `--pi-dir` or `--state-dir` to select other paths. Each issue has a locked SQLite session and
-disk-backed checkpoints/candidates under `~/.local/state/puchero/OWNER/REPO/ISSUE`. Repeat the same command to resume
+disk-backed checkpoints/candidates under `~/.local/state/caldero/OWNER/REPO/ISSUE`. Repeat the same command to resume
 nonterminal work; a published session retains its PR instead of starting another. Failed and cancelled sessions are
 terminal: rerunning reports their saved outcome and does not restart them. Use explicit retry below for failed sessions. Start a genuinely new task with a new
 GitHub issue, which gets its own state directory. Keep old directories for their publication receipts; changing
@@ -177,7 +177,7 @@ exiting releases it without a stale-lock wait.
 
 This is a trusted-local runner: tools execute with your user's filesystem permissions. Its minimal subprocess
 environment excludes inherited credentials and uses a separate HOME, but it is not a filesystem sandbox. Pi login
-files and GitHub keys are not placed in workspace snapshots or model prompts by the runner. Puchero keeps its own
+files and GitHub keys are not placed in workspace snapshots or model prompts by the runner. Caldero keeps its own
 durable tools and issue/AGENTS.md context rather than loading interactive Pi extensions or skills. The Cloudflare
 Worker path is unchanged and does not read local Pi files. No webhook, Access setup or cloud deployment is needed
 for this explicit local issue run. See [local Pi design](../../docs/design/local-pi.md).
@@ -211,7 +211,7 @@ The watcher still leaves settled terminal sessions alone. Use `pnpm status
 ### Watch labeled issues locally
 
 ```sh
-pnpm --filter @puchero/agent local --watch \
+pnpm --filter @caldero/agent local --watch \
   --check 'pnpm install --frozen-lockfile' --check 'pnpm test'
 ```
 
@@ -238,7 +238,7 @@ From the repository root:
 pnpm status
 pnpm status --issue 11
 pnpm status --issue 11 --ci
-pnpm --silent --filter @puchero/agent status --repo OWNER/REPO --json
+pnpm --silent --filter @caldero/agent status --repo OWNER/REPO --json
 ```
 
 Status reads the existing repository state root; use `--state-root PATH` for a
@@ -265,15 +265,15 @@ from local sessions. See [status design](../../docs/design/local-status.md).
 
 ## Automatic publication
 
-Every new session opens its PR automatically after the configured `PUCHERO_CHECKS` pass in the sandbox. There is
+Every new session opens its PR automatically after the configured `CALDERO_CHECKS` pass in the sandbox. There is
 no approval-mode setting or approve/reject action. The model cannot declare validation successful; only the
 workspace validation outcome starts publication. GitHub CI can run after the PR opens. Review and merging happen
-on GitHub; Puchero never merges automatically.
+on GitHub; Caldero never merges automatically.
 
 Stop works before publication begins. Once publishing starts, its remote outcome may already have landed.
 Historical state fields remain readable without rewriting stored documents or task journals. A legacy session
 paused in `awaitingApproval` stays paused until new instructions create a fresh run, or Stop cancels it. Its old
 candidate is never published merely by upgrading. An already running legacy session publishes its next successfully
-validated candidate automatically. `PUCHERO_POLICY` has been removed and any old environment value is ignored.
+validated candidate automatically. `CALDERO_POLICY` has been removed and any old environment value is ignored.
 See [automatic PR design](../../docs/design/automatic-pr.md) for acceptance criteria and rollback compatibility.
 Existing GitHub App permissions remain sufficient; no additional scopes are requested.

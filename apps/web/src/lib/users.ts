@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
-import { UsersListError } from "@puchero/contracts/http";
-import type { UsersResponse } from "@puchero/contracts/schemas/user";
+import { UsersListError } from "@caldero/contracts/http";
+import type { UsersResponse } from "@caldero/contracts/schemas/user";
 import { Effect, Schema } from "effect";
 import { apiClient } from "./api-client.js";
 

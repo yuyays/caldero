@@ -1,7 +1,7 @@
 import { Database } from "../db/database.ts";
-import { UsersListError } from "@puchero/contracts/http";
+import { UsersListError } from "@caldero/contracts/http";
 import { Schema, Effect } from "effect";
-import { UsersResponse } from "@puchero/contracts/schemas/user";
+import { UsersResponse } from "@caldero/contracts/schemas/user";
 
 const decodeUsers = Schema.decodeEffect(UsersResponse);
 

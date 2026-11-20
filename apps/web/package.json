@@ -1,5 +1,5 @@
 {
-  "name": "@puchero/web",
+  "name": "@caldero/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,7 @@
     "browser:install": "playwright install chromium"
   },
   "dependencies": {
-    "@puchero/contracts": "workspace:*",
+    "@caldero/contracts": "workspace:*",
     "@radix-ui/react-slot": "^1.5.0",
     "@tailwindcss/vite": "^4.3.5",
     "@tanstack/react-query": "^5.107.1",

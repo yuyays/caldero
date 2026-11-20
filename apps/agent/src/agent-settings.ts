@@ -1,6 +1,6 @@
 import { createModels } from "@earendil-works/pi-ai/models";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
-import { InboxUnavailable } from "@puchero/contracts/inbox";
+import { InboxUnavailable } from "@caldero/contracts/inbox";
 import { Config, Effect, Redacted, Schema } from "effect";
 import { GitHubApp } from "./github-app.ts";
 import { makeFakeGitHub } from "./fake-github.ts";
@@ -10,14 +10,14 @@ import { scriptedModels } from "./testing.ts";
 
 /** Explicit bindings keep production configuration independent of the local process environment. */
 export const agentEnvironment = {
-  PUCHERO_MODE: Config.String("PUCHERO_MODE").pipe(Config.withDefault("production")),
-  PUCHERO_ORIGIN: Config.String("PUCHERO_ORIGIN").pipe(Config.withDefault("http://localhost:1337")),
-  PUCHERO_REPO_OWNER: Config.String("PUCHERO_REPO_OWNER").pipe(Config.withDefault("")),
-  PUCHERO_REPO_NAME: Config.String("PUCHERO_REPO_NAME").pipe(Config.withDefault("")),
-  PUCHERO_DEV_TOKEN: Config.Redacted("PUCHERO_DEV_TOKEN").pipe(
+  CALDERO_MODE: Config.String("CALDERO_MODE").pipe(Config.withDefault("production")),
+  CALDERO_ORIGIN: Config.String("CALDERO_ORIGIN").pipe(Config.withDefault("http://localhost:1337")),
+  CALDERO_REPO_OWNER: Config.String("CALDERO_REPO_OWNER").pipe(Config.withDefault("")),
+  CALDERO_REPO_NAME: Config.String("CALDERO_REPO_NAME").pipe(Config.withDefault("")),
+  CALDERO_DEV_TOKEN: Config.Redacted("CALDERO_DEV_TOKEN").pipe(
     Config.withDefault(Redacted.make("")),
   ),
-  PUCHERO_DEV_LOGIN: Config.String("PUCHERO_DEV_LOGIN").pipe(Config.withDefault("reviewer")),
+  CALDERO_DEV_LOGIN: Config.String("CALDERO_DEV_LOGIN").pipe(Config.withDefault("reviewer")),
   GITHUB_WEBHOOK_SECRET: Config.Redacted("GITHUB_WEBHOOK_SECRET").pipe(
     Config.withDefault(Redacted.make("")),
   ),
@@ -30,8 +30,8 @@ export const agentEnvironment = {
   ACCESS_AUDIENCE: Config.String("ACCESS_AUDIENCE").pipe(Config.withDefault("")),
   ACCESS_APPROVERS: Config.String("ACCESS_APPROVERS").pipe(Config.withDefault("{}")),
   OPENAI_API_KEY: Config.Redacted("OPENAI_API_KEY").pipe(Config.withDefault(Redacted.make(""))),
-  PUCHERO_MODEL: Config.String("PUCHERO_MODEL").pipe(Config.withDefault("")),
-  PUCHERO_CHECKS: Config.String("PUCHERO_CHECKS").pipe(Config.withDefault("")),
+  CALDERO_MODEL: Config.String("CALDERO_MODEL").pipe(Config.withDefault("")),
+  CALDERO_CHECKS: Config.String("CALDERO_CHECKS").pipe(Config.withDefault("")),
 };
 const decodeApprovers = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
@@ -43,20 +43,20 @@ const invalid = (message: string) => new InboxUnavailable({ message });
 
 /** Missing production credentials fail closed; fake GitHub and models require an explicit development mode. */
 export const readAgentSettings = Effect.fn("readAgentSettings")(function* () {
-  const mode = yield* agentEnvironment.PUCHERO_MODE;
-  const origin = yield* agentEnvironment.PUCHERO_ORIGIN;
+  const mode = yield* agentEnvironment.CALDERO_MODE;
+  const origin = yield* agentEnvironment.CALDERO_ORIGIN;
   const repo = {
-    owner: (yield* agentEnvironment.PUCHERO_REPO_OWNER) || (mode === "dev" ? "acme" : ""),
-    name: (yield* agentEnvironment.PUCHERO_REPO_NAME) || (mode === "dev" ? "app" : ""),
+    owner: (yield* agentEnvironment.CALDERO_REPO_OWNER) || (mode === "dev" ? "acme" : ""),
+    name: (yield* agentEnvironment.CALDERO_REPO_NAME) || (mode === "dev" ? "app" : ""),
   };
   const configuredInstallation = yield* agentEnvironment.GITHUB_INSTALLATION_ID;
   const installationId =
     configuredInstallation === 0 && mode === "dev" ? 42 : configuredInstallation;
   const webhookSecret = Redacted.value(yield* agentEnvironment.GITHUB_WEBHOOK_SECRET);
-  const configuredChecks = yield* agentEnvironment.PUCHERO_CHECKS;
+  const configuredChecks = yield* agentEnvironment.CALDERO_CHECKS;
   const checks = yield* decodeChecks(
     configuredChecks || (mode === "dev" ? '["test -f notes.txt"]' : ""),
-  ).pipe(Effect.mapError(() => invalid("PUCHERO_CHECKS must be a JSON array of commands")));
+  ).pipe(Effect.mapError(() => invalid("CALDERO_CHECKS must be a JSON array of commands")));
   if (
     !["dev", "production"].includes(mode) ||
     !repo.owner ||
@@ -71,13 +71,13 @@ export const readAgentSettings = Effect.fn("readAgentSettings")(function* () {
     );
   const parsedOrigin = yield* Effect.try({
     try: () => new URL(origin),
-    catch: () => invalid("PUCHERO_ORIGIN must be an absolute origin"),
+    catch: () => invalid("CALDERO_ORIGIN must be an absolute origin"),
   });
   if (
     parsedOrigin.origin !== origin ||
     (mode === "production" && parsedOrigin.protocol !== "https:")
   )
-    return yield* invalid("PUCHERO_ORIGIN must be an exact HTTPS origin in production");
+    return yield* invalid("CALDERO_ORIGIN must be an exact HTTPS origin in production");
   const issuer = yield* agentEnvironment.ACCESS_ISSUER;
   const audience = yield* agentEnvironment.ACCESS_AUDIENCE;
   const approvers = yield* decodeApprovers(yield* agentEnvironment.ACCESS_APPROVERS).pipe(
@@ -89,8 +89,8 @@ export const readAgentSettings = Effect.fn("readAgentSettings")(function* () {
       return yield* invalid("Do not combine development authentication with Access configuration");
     auth = {
       mode: "dev",
-      token: Redacted.value(yield* agentEnvironment.PUCHERO_DEV_TOKEN),
-      login: yield* agentEnvironment.PUCHERO_DEV_LOGIN,
+      token: Redacted.value(yield* agentEnvironment.CALDERO_DEV_TOKEN),
+      login: yield* agentEnvironment.CALDERO_DEV_LOGIN,
     };
   } else {
     if (!issuer.startsWith("https://") || !audience || Object.keys(approvers).length === 0)
@@ -128,7 +128,7 @@ export const makeAgentRuntime = Effect.fn("makeAgentRuntime")(function* () {
   }
   const privateKey = Redacted.value(yield* agentEnvironment.GITHUB_PRIVATE_KEY);
   const appId = yield* agentEnvironment.GITHUB_APP_ID;
-  const modelId = yield* agentEnvironment.PUCHERO_MODEL;
+  const modelId = yield* agentEnvironment.CALDERO_MODEL;
   const key = Redacted.value(yield* agentEnvironment.OPENAI_API_KEY);
   if (!privateKey || !appId || !modelId || !key)
     return yield* invalid("Production requires GitHub App and model credentials");
@@ -137,7 +137,7 @@ export const makeAgentRuntime = Effect.fn("makeAgentRuntime")(function* () {
     installationId: settings.installationId,
     appId,
     privateKey,
-    author: { name: "puchero", email: "puchero@users.noreply.github.com" },
+    author: { name: "caldero", email: "caldero@users.noreply.github.com" },
   });
   const models = createModels({
     authContext: {

@@ -11,8 +11,8 @@ import {
   StaleDecision,
   type SessionFault,
   type SessionView,
-} from "@puchero/contracts/inbox";
-import { Events, type DecisionResult, type Repo, type SessionEvent } from "@puchero/domain";
+} from "@caldero/contracts/inbox";
+import { Events, type DecisionResult, type Repo, type SessionEvent } from "@caldero/domain";
 import { InboxAuth } from "./inbox-auth.ts";
 import { InboxStore } from "./inbox-store.ts";
 import { GitHub } from "./ports.ts";
@@ -37,7 +37,7 @@ export class Sessions extends Context.Service<
       deliveryId: string,
     ) => Effect.Effect<void, InboxUnavailable | SessionFault>;
   }
->()("puchero/Sessions") {}
+>()("caldero/Sessions") {}
 
 export class InboxConfig extends Context.Service<
   InboxConfig,
@@ -47,7 +47,7 @@ export class InboxConfig extends Context.Service<
     readonly repo: Repo;
     readonly installationId: number;
   }
->()("puchero/InboxConfig") {}
+>()("caldero/InboxConfig") {}
 
 const viewer = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;

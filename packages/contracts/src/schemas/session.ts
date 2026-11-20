@@ -1,4 +1,4 @@
-import { Repo, SessionState, Status } from "@puchero/domain";
+import { Repo, SessionState, Status } from "@caldero/domain";
 import { Schema } from "effect";
 
 /** A file's immutable contents; base64 preserves binary data in stored patches. */

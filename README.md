@@ -1,6 +1,6 @@
-# puchero
+# caldero
 
-Puchero runs a durable coding agent from a labeled GitHub issue, checks its changes,
+Caldero runs a durable coding agent from a labeled GitHub issue, checks its changes,
 and opens a pull request automatically when the checks pass. Review and merging
 happen on GitHub.
 

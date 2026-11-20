@@ -8,7 +8,7 @@ The default GitHub configuration is read only for `repo.owner` and `repo.name`;
 ```sh
 pnpm status
 pnpm status --issue 11
-pnpm --silent --filter @puchero/agent status --repo OWNER/REPO --json
+pnpm --silent --filter @caldero/agent status --repo OWNER/REPO --json
 ```
 
 `--state-root` selects the same repository state root used by watch mode; issue
@@ -66,7 +66,7 @@ Pi Durable 1.5.2's normal SQLite initializer attempts migration writes even for 
 existing store. The status reader instead uses Chord's SQLite facade in
 `read-only` mode, with a deferred read transaction and its normal busy timeout.
 It checks the pinned Pi SQLite schema version and reads the current session-scoped
-`puchero.session` document's latest revision. The owning `SessionDoc` definition
+`caldero.session` document's latest revision. The owning `SessionDoc` definition
 always checkpoints; the reader requires its base revision and document version,
 then decodes the inner state with the domain schema and validates repository,
 issue and session identity. Unsupported layouts fail closed, never migrate or

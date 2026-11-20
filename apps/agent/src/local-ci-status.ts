@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { PullRequestCi } from "@puchero/contracts/local-status";
-import type { Repo } from "@puchero/domain";
+import type { PullRequestCi } from "@caldero/contracts/local-status";
+import type { Repo } from "@caldero/domain";
 import { Effect, Schema } from "effect";
 
 const query = `

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "@effect/vitest";
-import { initialSession } from "@puchero/domain";
+import { initialSession } from "@caldero/domain";
 import { Effect } from "effect";
 import { makeD1InboxStore, type IndexStatement } from "./inbox-store.ts";
 

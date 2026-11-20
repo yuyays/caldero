@@ -2,7 +2,7 @@ import { NodeHttpServer } from "@effect/platform-node";
 import { DateTime, Effect, Layer } from "effect";
 import { HttpRouter, FetchHttpClient } from "effect/http";
 import { HttpApiClient } from "effect/http-api";
-import { StarterApi } from "@puchero/contracts/http";
+import { StarterApi } from "@caldero/contracts/http";
 import { describe, expect, it } from "@effect/vitest";
 import { Database, DatabaseError } from "./db/database.ts";
 import { HttpLive } from "./http.ts";

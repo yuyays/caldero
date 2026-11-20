@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { SessionDetail, SessionSummary } from "@puchero/contracts/inbox";
+import type { SessionDetail, SessionSummary } from "@caldero/contracts/inbox";
 import { Check, RefreshCw, ExternalLink, GitPullRequest } from "lucide-react";
 import { Button } from "./ui/button.js";
 import {
@@ -45,7 +45,7 @@ export function Inbox() {
       <header className="mb-8 flex flex-wrap items-center justify-between gap-4 border-b border-stone-300 pb-6">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
-            Puchero <span className="font-normal text-stone-600">/ Agent inbox</span>
+            Caldero <span className="font-normal text-stone-600">/ Agent inbox</span>
           </h1>
           <p className="mt-2 text-sm text-stone-600">Autonomous agent work and pull requests.</p>
         </div>

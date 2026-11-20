@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { Events, type Repo } from "@puchero/domain";
+import { Events, type Repo } from "@caldero/domain";
 import { Effect, Layer, Schema } from "effect";
 import { makeDiskWorkspaceStore } from "./disk-workspace-store.ts";
 import { readLocalSession } from "./local-status.ts";
@@ -164,7 +164,7 @@ const prepareLocalRetry = Effect.fn("prepareLocalRetry")(function* (options: {
   );
   if (state?.status !== "failed")
     return yield* new LocalRunnerError({
-      message: `Only failed sessions can be retried. Resume active work with pnpm --filter @puchero/agent local --issue ${options.issue}, using the same --state-dir and --check options.`,
+      message: `Only failed sessions can be retried. Resume active work with pnpm --filter @caldero/agent local --issue ${options.issue}, using the same --state-dir and --check options.`,
     });
   return state;
 });

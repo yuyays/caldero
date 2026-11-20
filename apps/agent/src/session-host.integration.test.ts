@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { MemoryStorage } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "@effect/vitest";
-import { Events } from "@puchero/domain";
+import { Events } from "@caldero/domain";
 import { Effect, Layer } from "effect";
 import { Base64 } from "effect/encoding";
 import { makeFakeGitHub } from "./fake-github.ts";
@@ -62,7 +62,7 @@ const setup = Effect.fn("setup")(function* (
     ) => ReturnType<typeof GitHub.of>;
   } = {},
 ) {
-  const root = yield* Effect.promise(() => mkdtemp(join(tmpdir(), "puchero-")));
+  const root = yield* Effect.promise(() => mkdtemp(join(tmpdir(), "caldero-")));
   const github = makeFakeGitHub({ source, ...options.github });
   const projection = makeMemoryProjection();
   const scripted = scriptedModels();
@@ -138,9 +138,9 @@ const setup = Effect.fn("setup")(function* (
               return async (...args: Parameters<typeof durable.document>) => {
                 const document = await target.document(...args);
                 const storedState = options.storedState?.();
-                if (storedState !== undefined && document?.record.kind === "puchero.session")
+                if (storedState !== undefined && document?.record.kind === "caldero.session")
                   return { ...document, value: { ...document.value, state: storedState } };
-                return options.corruptState?.() && document?.record.kind === "puchero.session"
+                return options.corruptState?.() && document?.record.kind === "caldero.session"
                   ? { ...document, value: { ...document.value, state: "{broken stored JSON" } }
                   : document;
               };
@@ -584,7 +584,7 @@ describe("SessionHost", () => {
   it.effect("fails visibly when the branch already holds something else", () =>
     Effect.gen(function* () {
       const { host, github } = yield* setup({
-        github: { branches: [["puchero/7-v1", "someone-else"]] },
+        github: { branches: [["caldero/7-v1", "someone-else"]] },
       });
       yield* publishCandidate(host);
       yield* host.drain();

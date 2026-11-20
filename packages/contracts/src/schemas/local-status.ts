@@ -1,4 +1,4 @@
-import { Repo, SessionState } from "@puchero/domain";
+import { Repo, SessionState } from "@caldero/domain";
 import { Schema } from "effect";
 
 /** Optional live observation of the current GitHub PR head. */

@@ -1,6 +1,6 @@
 import { HttpApiBuilder, HttpApiScalar } from "effect/http-api";
 import { HttpRouter } from "effect/http";
-import { StarterApi } from "@puchero/contracts/http";
+import { StarterApi } from "@caldero/contracts/http";
 import { Effect, Layer } from "effect";
 import { listUsers } from "./services/users.ts";
 

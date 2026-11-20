@@ -1,8 +1,8 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import { openDurableObjectSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/cloudflare";
 import type { Wake } from "@earendil-works/pi-durable";
-import { SessionFault } from "@puchero/contracts/inbox";
-import type { SessionEvent } from "@puchero/domain";
+import { SessionFault } from "@caldero/contracts/inbox";
+import type { SessionEvent } from "@caldero/domain";
 import { Clock, Effect, Exit, Layer, Scope, Semaphore } from "effect";
 import { makeAgentRuntime } from "./agent-settings.ts";
 import { ContainerWorkspace, makeR2WorkspaceStore } from "./container-workspace.ts";
