@@ -88,11 +88,12 @@ export const registerWorkspaceContract = (
           let checkpoint: { number: number; digest: string } | null = null;
           const notices: Array<string> = [];
           const env = workspace.env({
-            read: async () => ({ repo, baseSha: "base-1", bootId, checkpoint }),
-            restored: async (boot, notice) => {
-              bootId = boot;
-              if (notice !== undefined) notices.push(notice);
-            },
+            read: () => Effect.succeed({ repo, baseSha: "base-1", bootId, checkpoint }),
+            restored: (boot, notice) =>
+              Effect.sync(() => {
+                bootId = boot;
+                if (notice !== undefined) notices.push(notice);
+              }),
           });
           const context = BACKGROUND_CONTEXT;
           yield* edit(() => env.writeFile("logo.bin", binary, context));
@@ -137,10 +138,11 @@ export const registerWorkspaceContract = (
         let bootId: string | null = null;
         let checkpoint: { number: number; digest: string } | null = null;
         const env = workspace.env({
-          read: async () => ({ repo, baseSha: "base-1", bootId, checkpoint }),
-          restored: async (boot) => {
-            bootId = boot;
-          },
+          read: () => Effect.succeed({ repo, baseSha: "base-1", bootId, checkpoint }),
+          restored: (boot) =>
+            Effect.sync(() => {
+              bootId = boot;
+            }),
         });
         yield* edit(() => env.remove("bin", { recursive: true }, BACKGROUND_CONTEXT));
         yield* edit(() => env.writeFile("bin", "flat file\n", BACKGROUND_CONTEXT));

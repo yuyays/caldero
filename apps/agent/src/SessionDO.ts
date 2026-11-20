@@ -36,7 +36,6 @@ const implementation = Effect.gen(function* () {
         const index = makeD1InboxStore(yield* database.raw);
         let host: SessionHost | undefined;
         let access: Effect.Success<ReturnType<typeof makeSessionAccess<SessionHost>>> | undefined;
-        let alarmWrites = Promise.resolve();
         const run = Effect.runPromiseWith(yield* Effect.context());
         const alarmLock = yield* Semaphore.make(1);
         const deleteAlarm = Effect.tryPromise({
@@ -65,10 +64,9 @@ const implementation = Effect.gen(function* () {
           (effect) => alarmLock.withPermits(1)(effect),
         );
         const onWake = (wake: Wake) => {
-          alarmWrites = alarmWrites
-            .then(() => run(arm(wake)))
-            .catch(() => raw.abort("Could not arm the session alarm"));
-          raw.waitUntil(alarmWrites);
+          // `arm` is serialized by its semaphore; each wake still needs its own promise for waitUntil.
+          const write = run(arm(wake)).catch(() => raw.abort("Could not arm the session alarm"));
+          raw.waitUntil(write);
         };
         const start = sandbox.start({ enableInternet: false }).pipe(
           Effect.asVoid,

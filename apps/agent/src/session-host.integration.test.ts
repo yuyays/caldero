@@ -5,7 +5,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/provid
 import { MemoryStorage } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "@effect/vitest";
 import { Events } from "@caldero/domain";
-import { Effect, Layer } from "effect";
+import { Deferred, Effect, Fiber, Layer } from "effect";
 import { Base64 } from "effect/encoding";
 import { makeFakeGitHub } from "./fake-github.ts";
 import { LocalWorkspace } from "./local-workspace.ts";
@@ -31,10 +31,13 @@ const labeled = Events.IssueLabeled.make({
   baseRef: "main",
 });
 
-/** A promise and the function that settles it, for steps a test waits on. */
+/** An Effect-owned signal for steps a test waits on. */
 const signal = () => {
-  const { promise, resolve } = Promise.withResolvers<void>();
-  return { wait: Effect.promise(() => promise), fire: () => resolve() };
+  const deferred = Deferred.makeUnsafe<void>();
+  return {
+    wait: Deferred.await(deferred),
+    fire: () => Deferred.doneUnsafe(deferred, Effect.void),
+  };
 };
 
 /**
@@ -690,6 +693,26 @@ describe("SessionHost", () => {
         status: "published",
         runId: 1,
       });
+    }),
+  );
+
+  it.effect("interrupting drain stops waiting for a live task", () =>
+    Effect.gen(function* () {
+      const { host, scripted } = yield* setup();
+      const started = signal();
+      scripted.control.script = (...args) => {
+        started.fire();
+        return runsForever(...args);
+      };
+      yield* host.deliver(labeled, "delivery-1");
+      yield* started.wait;
+      const draining = yield* host.drain().pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(draining);
+
+      expect(yield* host.deliver(Events.Cancel.make({ actor: "ann" }), "cancel-1")).toBe("applied");
+      yield* host.drain();
+      expect((yield* host.view()).state.status).toBe("cancelled");
     }),
   );
 

@@ -36,18 +36,21 @@ export type Checkpoint = typeof Checkpoint.Type;
 
 /** Pi owns this journal; the workspace owns detecting and repairing a changed boot. */
 export interface WorkspaceRecovery {
-  readonly read: (signal: AbortSignal) => Promise<{
-    readonly repo: Repo;
-    readonly baseSha: string;
-    readonly bootId: string | null;
-    readonly checkpoint: Checkpoint | null;
-  }>;
+  readonly read: (signal: AbortSignal) => Effect.Effect<
+    {
+      readonly repo: Repo;
+      readonly baseSha: string;
+      readonly bootId: string | null;
+      readonly checkpoint: Checkpoint | null;
+    },
+    WorkspaceError
+  >;
   /** Atomically record the boot and admit the restoration steer, when present. */
   readonly restored: (
     bootId: string,
     notice: string | undefined,
     signal: AbortSignal,
-  ) => Promise<void>;
+  ) => Effect.Effect<void, WorkspaceError>;
 }
 
 /** Immutable blobs outside the sandbox, namespaced to one session. */

@@ -19,7 +19,12 @@ export const ContainerWorkspace = {
         // oxlint-disable-next-line caldero/runtime-boundary -- ContainerConnection invokes Alchemy start through a Promise
         const run = Effect.runPromiseWith(yield* Effect.context());
         const connection = yield* Effect.acquireRelease(
-          Effect.sync(() => new ContainerConnection(options.container, () => run(options.start))),
+          Effect.sync(
+            () =>
+              new ContainerConnection(options.container, (signal) =>
+                run(options.start, { signal }),
+              ),
+          ),
           (opened) => Effect.sync(() => opened.close()),
         );
         return yield* makeGitWorkspace({
