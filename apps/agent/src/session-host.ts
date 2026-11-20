@@ -823,11 +823,10 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
 
     /** Waits until no task is live and every failed run is reported. For tests and graceful shutdown. */
     drain: Effect.fn("SessionHost.drain")(function* () {
-      const signal = yield* Effect.abortSignal;
-      const callContext = withAbortSignal(signal, context);
       for (;;) {
+        // Shared reconciliation continues on the host context if this drain fiber is interrupted.
         yield* Effect.tryPromise({
-          try: () => reconcile(callContext),
+          try: () => reconcile(context),
           catch: hostError,
         });
         // `reconcile` may have queued more passes while this one ran; wait for the tail to stop moving.
@@ -836,8 +835,9 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
           settled = reconciliationTail;
           yield* Effect.tryPromise({ try: () => settled, catch: hostError });
         } while (settled !== reconciliationTail);
+        // Each wait gets this fiber's interruption signal, not the enclosing scope's.
         const inspection = yield* Effect.tryPromise({
-          try: () => harness.inspect(callContext),
+          try: (signal) => harness.inspect(withAbortSignal(signal, context)),
           catch: hostError,
         });
         if (inspection.tasks.length === 0) {
@@ -849,7 +849,8 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
           inspection.tasks,
           (task) =>
             Effect.tryPromise({
-              try: () => harness.waitForTask(task.record.id, callContext),
+              try: (signal) =>
+                harness.waitForTask(task.record.id, withAbortSignal(signal, context)),
               catch: hostError,
             }),
           { concurrency: "unbounded" },

@@ -138,6 +138,9 @@ export class ContainerConnection extends Connection {
   #closed = false;
   /** Stops a shared startup (including its native exec) when the connection closes. */
   #abort = new AbortController();
+  /** Rejects at close, so callers stop waiting even while workerd's spawn RPC is still in flight. */
+  #closedRejection: Promise<never>;
+  #rejectClosed: (error: unknown) => void;
 
   constructor(
     container: () => NativeContainer,
@@ -148,6 +151,11 @@ export class ContainerConnection extends Connection {
     this.#container = container;
     this.#startContainer = startContainer;
     this.#onLog = onLog;
+    const closed = Promise.withResolvers<never>();
+    this.#closedRejection = closed.promise;
+    this.#rejectClosed = closed.reject;
+    // Callers race this promise; an unobserved rejection must not surface as an unhandled one.
+    void this.#closedRejection.catch(() => {});
   }
 
   override async info(signal?: AbortSignal): Promise<RemoteInfo> {
@@ -170,6 +178,7 @@ export class ContainerConnection extends Connection {
     this.#closed = true;
     this.#ready = undefined;
     this.#abort.abort();
+    this.#rejectClosed(new RemoteError({ code: "unknown", message: "Connection closed" }));
     if (this.#session)
       this.#teardown(
         this.#session,
@@ -185,16 +194,19 @@ export class ContainerConnection extends Connection {
   #connect(signal?: AbortSignal) {
     if (this.#closed)
       return Promise.reject(new RemoteError({ code: "unknown", message: "Connection closed" }));
-    if (this.#ready === undefined) {
-      const ready = this.#start();
+    let ready = this.#ready;
+    if (ready === undefined) {
+      ready = this.#start();
       this.#ready = ready;
       ready.catch(() => {
         if (this.#ready === ready) this.#ready = undefined;
       });
     }
-    return signal === undefined
-      ? this.#ready
-      : awaitWithContext(this.#ready, withAbortSignal(signal, BACKGROUND_CONTEXT));
+    const waiting =
+      signal === undefined
+        ? ready
+        : awaitWithContext(ready, withAbortSignal(signal, BACKGROUND_CONTEXT));
+    return Promise.race([waiting, this.#closedRejection]);
   }
 
   #send(session: Session, op: string, json: Json, options: RequestOptions): Promise<Reply> {
@@ -278,9 +290,13 @@ export class ContainerConnection extends Connection {
       }
     }
     if (this.#closed) {
-      process.kill(9);
-      // The kill settles exitCode as a rejection; it has no owner once startup aborts.
+      // Attach first: a synchronous kill error must not skip the exit handler.
       void process.exitCode.catch(() => {});
+      try {
+        process.kill(9);
+      } catch {
+        // Already gone.
+      }
       throw lost("Connection closed");
     }
     if (process.stdin === null || process.stdout === null || process.stderr === null) {
