@@ -44,5 +44,5 @@
       }
     ]
   },
-  "include": ["src", "alchemy.run.ts"]
+  "include": ["src", "alchemy.run.ts", "vite.config.ts"]
 }
