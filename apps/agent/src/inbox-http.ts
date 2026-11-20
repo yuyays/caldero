@@ -191,13 +191,17 @@ const webhook = Effect.gen(function* () {
   );
   return HttpServerResponse.empty({ status: 204 });
 }).pipe(
-  Effect.catchTag("SessionFault", (fault) => HttpServerResponse.json(fault, { status: 500 })),
-  Effect.catchTag("InboxUnavailable", (error) =>
-    HttpServerResponse.json(
-      new InboxUnavailable({ message: "Admission unavailable", reason: error.reason ?? "unknown" }),
-      { status: 503 },
-    ),
-  ),
+  Effect.catchTags({
+    SessionFault: (fault) => HttpServerResponse.json(fault, { status: 500 }),
+    InboxUnavailable: (error) =>
+      HttpServerResponse.json(
+        new InboxUnavailable({
+          message: "Admission unavailable",
+          reason: error.reason ?? "unknown",
+        }),
+        { status: 503 },
+      ),
+  }),
 );
 
 export const WebhookRoutes = HttpRouter.add("POST", "/webhooks/github", webhook);

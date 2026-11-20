@@ -140,10 +140,11 @@ const implementation = Effect.gen(function* () {
           Effect.flatMap((activated) =>
             activated === undefined ? Effect.void : arm(activated.wake()),
           ),
-          Effect.catchTag("SessionFault", sessions.fail),
-          Effect.catchTag("SessionHostError", () =>
-            Effect.logWarning("Session activation is unavailable; the next call can retry"),
-          ),
+          Effect.catchTags({
+            SessionFault: sessions.fail,
+            SessionHostError: () =>
+              Effect.logWarning("Session activation is unavailable; the next call can retry"),
+          }),
         );
         return {
           start: Effect.fn("SessionDO.start")(function* (

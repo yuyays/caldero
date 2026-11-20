@@ -24,7 +24,7 @@ type Json = Record<string, unknown>;
 const decodeJson = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
 const decodeInfo = Schema.decodeUnknownSync(
   Schema.Struct({
-    protocol: Schema.Number,
+    protocol: Schema.Finite,
     version: Schema.String,
     os: Schema.String,
     arch: Schema.String,
@@ -33,7 +33,7 @@ const decodeInfo = Schema.decodeUnknownSync(
     separator: Schema.String,
     cwd: Schema.String,
     driveCwds: Schema.Record(Schema.String, Schema.String),
-    pid: Schema.Number,
+    pid: Schema.Finite,
     features: Schema.optionalKey(Schema.mutable(Schema.Array(Schema.String))),
   }),
 );

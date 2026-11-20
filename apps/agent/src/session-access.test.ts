@@ -43,7 +43,7 @@ describe("Session activation", () => {
           opens = 0;
         const access = yield* makeSessionAccess({
           expectedIssue: 7,
-          readIdentity: Effect.succeed(undefined),
+          readIdentity: Effect.undefined,
           writeIdentity: () =>
             Effect.sync(() => {
               writes++;

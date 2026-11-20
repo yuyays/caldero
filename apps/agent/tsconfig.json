@@ -11,7 +11,8 @@
         "includeSuggestionsInTsc": false,
         "ignoreEffectWarningsInTscExitCode": true,
         "ignoreEffectErrorsInTscExitCode": false,
-        "allowedUnstableApis": ["@effect/vitest"],
+        // Replaces the base plugin block: base entries do not apply here, so mirror new ones.
+        "allowedUnstableApis": ["effect/http", "effect/http-api", "@effect/vitest"],
         "effectFn": ["inferred-span", "suggested-span"],
         "diagnosticSeverity": {
           "floatingEffect": "error",
