@@ -145,6 +145,7 @@ const request = Effect.fn("GitHubApp.request")(function* (
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         redirect: "error",
         signal,
+        // oxlint-disable-next-line anti-slop/no-unknown-returns -- Raw transport channel: every caller decodes with its own Schema.
       }).then(async (response): Promise<unknown> => {
         if (!response.ok) {
           await response.body?.cancel();

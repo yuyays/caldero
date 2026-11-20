@@ -86,7 +86,7 @@ export default defineConfig({
     },
     overrides: [
       {
-        files: ["apps/agent/src/**/*.ts", "apps/web/src/**"],
+        files: ["apps/agent/src/**/*.ts", "apps/web/src/**", "packages/domain/src/**/*.ts"],
         rules: { "caldero/runtime-boundary": "error" },
       },
       {
@@ -132,6 +132,7 @@ export default defineConfig({
           "packages/contracts/src/**/*.ts",
           "packages/domain/src/**/*.ts",
           "apps/agent/src/inbox-http.ts",
+          "apps/agent/src/github-app.ts",
         ],
         rules: {
           "anti-slop/no-unknown-parameters": "error",
