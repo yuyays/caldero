@@ -1,5 +1,5 @@
 import { createPrivateKey, randomUUID, sign } from "node:crypto";
-import type { ApprovalBinding, RepairTarget, Repo } from "@caldero/domain";
+import type { ApprovalBinding, PublicCheck, RepairTarget, Repo } from "@caldero/domain";
 import { Clock, DateTime, Effect, Layer, Result, Schema } from "effect";
 import { Base64 } from "effect/encoding";
 import {
@@ -121,6 +121,22 @@ const readError = (error: HttpFailure | GitHubError | Schema.SchemaError) =>
       ? githubError(error)
       : new GitHubError({ message: "Invalid GitHub response" });
 const segment = encodeURIComponent;
+
+/** Only operator-designated commands cross into Markdown. Tool output stays in the session. */
+const verificationSection = (publicChecks: ReadonlyArray<PublicCheck>) => {
+  if (publicChecks.length === 0)
+    return "## Verification\n\nVerify the issue’s acceptance criteria during review.";
+  const checks = publicChecks
+    .map(({ label, command }) =>
+      `${label}\n$ ${command}`
+        .split(/\r\n?|\n/u)
+        .map((line) => `    ${line}`)
+        .join("\n"),
+    )
+    .join("\n\n");
+  return `## Verification\n\nPassed on the frozen patch:\n\n${checks}\n\nVerify the remaining acceptance criteria during review.`;
+};
+
 const bindingKey = (binding: ApprovalBinding) =>
   JSON.stringify([
     binding.sessionId,
@@ -602,6 +618,7 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
       binding: ApprovalBinding,
       patch: Patch,
       journal: PublishJournal,
+      publicChecks: ReadonlyArray<PublicCheck> = [],
     ) {
       if (
         patch.digest !== binding.patchDigest ||
@@ -623,7 +640,7 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
           author: { ...options.author, date },
           message: `caldero: issue #${issue} version ${binding.version}\n\nPatch: ${binding.patchDigest}`,
           title: `Resolve #${issue} (agent v${binding.version})`,
-          body: `Closes #${issue}\n\nValidated patch: ${binding.patchDigest}\nBase: ${binding.baseRef} at ${binding.baseSha}`,
+          body: `Closes #${issue}\n\nValidated patch: ${binding.patchDigest}\nBase: ${binding.baseRef} at ${binding.baseSha}\n\n${verificationSection(publicChecks)}`,
           baseTree: null,
           blobs: null,
           treeSha: null,

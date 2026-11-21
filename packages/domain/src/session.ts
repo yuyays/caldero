@@ -42,10 +42,18 @@ export type Status = typeof Status.Type;
 export const Policy = Schema.Literals(["off", "observe", "auto"]);
 export type Policy = typeof Policy.Type;
 
+/** An operator-designated check whose label and command may appear on the PR. */
+export const PublicCheck = Schema.Struct({
+  label: Schema.String,
+  command: Schema.String,
+});
+export type PublicCheck = typeof PublicCheck.Type;
+
 /** A validated, frozen patch bound to publication. */
 export const Candidate = Schema.Struct({
   binding: ApprovalBinding,
   evidence: Schema.String,
+  publicChecks: Schema.optionalKey(Schema.Array(PublicCheck)),
 });
 
 export const SessionState = Schema.Struct({
@@ -137,7 +145,12 @@ export const SessionEvent = Schema.TaggedUnion({
     automatic: Schema.optionalKey(Schema.Boolean),
   },
   RunAnswered: { runId: Schema.Int },
-  Validated: { runId: Schema.Int, patchDigest: Schema.String, evidence: Schema.String },
+  Validated: {
+    runId: Schema.Int,
+    patchDigest: Schema.String,
+    evidence: Schema.String,
+    publicChecks: Schema.optionalKey(Schema.Array(PublicCheck)),
+  },
   ValidationFailed: { runId: Schema.Int, evidence: Schema.String },
   RunFailed: { runId: Schema.Int, reason: Schema.String },
   Cancel: { actor: Schema.String },
@@ -340,7 +353,7 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
         (instructionId) => Instruction.cases.Validate.make({ instructionId, runId }),
       ]);
     },
-    Validated: ({ runId, patchDigest, evidence }) => {
+    Validated: ({ runId, patchDigest, evidence, publicChecks }) => {
       if (!isCurrentRun(runId, "validating") || state.baseSha === null || state.baseRef === null)
         return unchanged("stale");
       const version = state.version + 1;
@@ -359,7 +372,7 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
           status: "publishing",
           version,
           attempts: 0,
-          candidate: { binding, evidence },
+          candidate: { binding, evidence, ...(publicChecks === undefined ? {} : { publicChecks }) },
         },
         [(instructionId) => Instruction.cases.Publish.make({ instructionId, binding })],
       );

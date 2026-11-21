@@ -530,6 +530,40 @@ describe("GitHubApp", () => {
     );
   }
 
+  it.effect("uses the original verification text when recovery creates the PR", () =>
+    Effect.gen(function* () {
+      const http = yield* publisherPeer();
+      http.dropAfter("/repos/acme/app/git/refs");
+      const { journal } = memoryJournal();
+      const first = yield* adapter(http.url);
+      const checks = [
+        {
+          label: "Reload demo requests without losing audit evidence",
+          command: "pnpm --filter @pcc/web test src/lib/demo.test.ts",
+        },
+      ];
+      expect(
+        yield* first.publish(7, binding, patch, journal, checks).pipe(Effect.flip),
+      ).toMatchObject({ kind: "ambiguous" });
+      const next = yield* adapter(http.url);
+      expect(yield* next.reconcile(7, binding, journal)).toMatchObject({
+        found: "pullRequest",
+        pullRequest: { number: 101 },
+      });
+      const prPosts = http.posts.filter((post) => post.path === "/repos/acme/app/pulls");
+      expect(prPosts).toEqual([
+        {
+          path: "/repos/acme/app/pulls",
+          body: expect.objectContaining({
+            body: expect.stringContaining(
+              "    Reload demo requests without losing audit evidence\n    $ pnpm --filter @pcc/web test src/lib/demo.test.ts",
+            ),
+          }),
+        },
+      ]);
+    }),
+  );
+
   for (const crashAfterSave of [1, 2, 3, 4, 5, 6, 7]) {
     it.effect(
       `resumes from durable receipt ${crashAfterSave} after the publishing process dies`,

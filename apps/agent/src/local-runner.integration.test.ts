@@ -263,7 +263,7 @@ describe("Local durable runner", () => {
     }),
   );
 
-  it.effect("rejects incompatible retry arguments before loading Pi or GitHub credentials", () =>
+  it.effect("rejects invalid local arguments before loading Pi or GitHub credentials", () =>
     Effect.gen(function* () {
       const root = yield* directory;
       for (const [args, message] of [
@@ -271,6 +271,7 @@ describe("Local durable runner", () => {
         [["--retry", "--check-connection"], "--retry cannot"],
         [["--retry", "--state-root", root], "require --watch"],
         [["--auto-repair", "--issue", "7"], "--auto-repair requires --watch"],
+        [["--issue", "7", "--pr-check", "Label only"], "Use --pr-check LABEL=COMMAND"],
       ] as const) {
         const result = yield* Effect.tryPromise({
           try: () =>
@@ -400,17 +401,26 @@ describe("Local durable runner", () => {
         const github = makeFakeGitHub({ source: [] });
         const pi = scriptedModels();
         const open = (checks: ReadonlyArray<string>, retry = false) =>
-          openLocalIssue({ repo, issue: 7, stateDir, checks, pi, retry }).pipe(
-            Effect.provide(github.layer),
-          );
+          openLocalIssue({
+            repo,
+            issue: 7,
+            stateDir,
+            checks,
+            pi,
+            retry,
+            publicChecks: retry
+              ? []
+              : [{ label: "Fixture exists", command: "echo missing-fixture; false" }],
+          }).pipe(Effect.provide(github.layer));
         const failed = yield* Effect.scoped(
           Effect.gen(function* () {
-            const host = yield* open(["echo missing-fixture; false"]);
+            const host = yield* open([]);
             yield* host.drain();
             return (yield* host.view()).state;
           }),
         );
         expect(failed.status).toBe("failed");
+        expect(github.state.pullRequests).toHaveLength(0);
         const recovered = yield* Effect.scoped(
           Effect.gen(function* () {
             const host = yield* open(["test -f notes.txt"], true);
@@ -471,6 +481,7 @@ describe("Local durable runner", () => {
         );
         const stateDir = yield* directory;
         const github = makeFakeGitHub({ source: [] });
+        const remote = yield* GitHub.pipe(Effect.provide(github.layer));
         const scripted = scriptedModels();
         const reasoning: Array<string | undefined> = [];
         const original = scripted.control.script;
@@ -478,14 +489,29 @@ describe("Local durable runner", () => {
           reasoning.push(options?.reasoning);
           return original(context, options, ...rest);
         };
+        const publishedChecks: unknown[] = [];
         const open = () =>
           openLocalIssue({
             repo,
             issue: 7,
             stateDir,
             checks: ['test -f notes.txt && test -z "${CALDERO_TEST_HOST_ONLY+x}"'],
+            publicChecks: [
+              { label: "The generated notes are nonempty", command: "test -s notes.txt" },
+            ],
             pi: { ...scripted, thinkingLevel: "medium" },
-          }).pipe(Effect.provide(github.layer));
+          }).pipe(
+            Effect.provideService(
+              GitHub,
+              GitHub.of({
+                ...remote,
+                publish: (issue, binding, patch, journal, checks) => {
+                  publishedChecks.push(checks);
+                  return remote.publish(issue, binding, patch, journal, checks);
+                },
+              }),
+            ),
+          );
         const first = yield* Effect.scoped(
           Effect.gen(function* () {
             const host = yield* open();
@@ -507,6 +533,10 @@ describe("Local durable runner", () => {
         expect(recovered.state.pullRequest).toEqual(first.state.pullRequest);
         expect(recovered.patch).toEqual(first.patch);
         expect(recovered.patchUnavailable).not.toBe(true);
+        expect(recovered.state.candidate?.evidence).toContain("test -s notes.txt");
+        expect(publishedChecks).toEqual([
+          [{ label: "The generated notes are nonempty", command: "test -s notes.txt" }],
+        ]);
         expect(github.state.pullRequests).toHaveLength(1);
       }),
   );

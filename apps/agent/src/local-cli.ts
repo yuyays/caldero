@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { Events, Repo } from "@caldero/domain";
+import { Events, type PublicCheck, Repo } from "@caldero/domain";
 import { Effect, Schema } from "effect";
 import { GitHubApp } from "./github-app.ts";
 import { openLocalPi } from "./local-pi.ts";
@@ -41,6 +41,7 @@ pnpm --filter @caldero/agent local --watch --check 'COMMAND' [--check 'COMMAND']
 --repair               Repair one failed CI job on the saved open PR (pnpm repair)
 --watch                Poll labeled issues, one at a time; resume admitted work on restart
 --auto-repair          With --watch, attempt one repair per saved PR on failed Actions CI
+--pr-check LABEL=CMD   Run a check and share its label and command in the PR body (repeatable)
 --label NAME           Watch label (default agent)
 --poll-seconds N       Delay between watch scans (default 60)
 --state-root PATH      Watch state root (default ~/.local/state/caldero/OWNER/REPO)
@@ -76,6 +77,7 @@ const command = Effect.gen(function* () {
           "poll-seconds": { type: "string" },
           "state-root": { type: "string" },
           check: { type: "string", multiple: true },
+          "pr-check": { type: "string", multiple: true },
           "github-config": { type: "string" },
           "pi-dir": { type: "string" },
           "state-dir": { type: "string" },
@@ -124,10 +126,30 @@ const command = Effect.gen(function* () {
     return yield* new LocalRunnerError({
       message: "Use a nonempty --label and --poll-seconds of at least 1",
     });
+  const publicChecks: PublicCheck[] = [];
+  for (const check of values["pr-check"] ?? []) {
+    const separator = check.indexOf("=");
+    const checkLabel = check.slice(0, separator).trim();
+    const shellCommand = check.slice(separator + 1).trim();
+    if (
+      separator < 1 ||
+      !checkLabel ||
+      !shellCommand ||
+      checkLabel.length > 120 ||
+      shellCommand.length > 1000 ||
+      /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(check)
+    )
+      return yield* new LocalRunnerError({
+        message: "Use --pr-check LABEL=COMMAND with a single-line public label and command",
+      });
+    publicChecks.push({ label: checkLabel, command: shellCommand });
+  }
+  if (publicChecks.length > 8)
+    return yield* new LocalRunnerError({ message: "Use at most eight --pr-check options" });
+  const checks = values.check ?? [];
+  const commands = [...checks, ...publicChecks.map((check) => check.command)];
   if (!values["check-connection"])
-    yield* values.watch
-      ? validateLocalChecks(values.check ?? [])
-      : validateLocalIssue(issue, values.check ?? []);
+    yield* values.watch ? validateLocalChecks(commands) : validateLocalIssue(issue, commands);
   const pi = yield* openLocalPi({
     cwd: process.cwd(),
     ...(values["pi-dir"] ? { agentDir: resolve(values["pi-dir"]) } : {}),
@@ -161,7 +183,8 @@ const command = Effect.gen(function* () {
   });
   const localIssue = {
     repo: config.repo,
-    checks: values.check ?? [],
+    checks,
+    publicChecks,
     pi,
   };
   const loadRepair = Effect.fn("LocalCLI.loadRepair")(function* (number: number) {

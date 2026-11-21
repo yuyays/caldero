@@ -154,6 +154,24 @@ pnpm --filter @caldero/agent local --check-connection
 pnpm --filter @caldero/agent local --issue 123 --check 'pnpm install --frozen-lockfile && pnpm test'
 ```
 
+Use `--pr-check LABEL=COMMAND` to run a check and include its behavior label
+and command in the new PR’s **Verification** section. For example, in a
+repository with the demo reload regression test:
+
+```sh
+pnpm --filter @caldero/agent local --issue 123 \
+  --check 'pnpm install --frozen-lockfile' \
+  --pr-check 'Demo reload accepts existing requests=pnpm --filter @pcc/web test src/lib/demo.test.ts'
+```
+
+Each `--pr-check` must pass alongside the ordinary checks on the frozen patch.
+Choose public-safe labels and commands. Standard `--check` commands and all
+command output stay in local validation evidence. The PR asks reviewers to
+verify the remaining issue criteria. With `--watch`, the options apply to
+each admitted issue. Repairs append a fix commit to the existing PR.
+For the demo, the remaining manual check is to load demo data twice and
+confirm the original requests and their audit events are still present.
+
 Replace `123` and the checks with the issue and validation commands you intend to run. It reads the host-only
 GitHub App configuration at `~/.config/caldero/github-app.json`:
 

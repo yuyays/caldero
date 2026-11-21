@@ -1,7 +1,7 @@
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import type { Patch } from "@caldero/contracts/inbox";
 export { FileChange, Patch } from "@caldero/contracts/inbox";
-import { ApprovalBinding, type Repo, type SessionState } from "@caldero/domain";
+import { ApprovalBinding, type PublicCheck, type Repo, type SessionState } from "@caldero/domain";
 import { Context, type Effect, Schema } from "effect";
 
 /** A failure's message, for errors that cross into a typed error or a stored outcome. */
@@ -18,6 +18,7 @@ export interface Validation {
   readonly passed: boolean;
   readonly patch: Patch;
   readonly evidence: string;
+  readonly publicChecks?: ReadonlyArray<PublicCheck>;
 }
 
 /** A file of the repository at the base commit. */
@@ -156,6 +157,7 @@ export class GitHub extends Context.Service<
       binding: ApprovalBinding,
       patch: Patch,
       journal: PublishJournal,
+      publicChecks?: ReadonlyArray<PublicCheck>,
     ) => Effect.Effect<PullRequest, PublishError>;
     readonly reconcile: (
       issue: number,
