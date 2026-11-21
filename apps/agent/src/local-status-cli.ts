@@ -2,8 +2,12 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs, stripVTControlCharacters } from "node:util";
-import { LocalStatus } from "@caldero/contracts/local-status";
-import { Repo } from "@caldero/domain";
+import {
+  LocalStatus,
+  type LocalAutomaticRepair,
+  type PullRequestCi,
+} from "@caldero/contracts/local-status";
+import { automaticRepairStatus, canStartRepair, Repo, type SessionState } from "@caldero/domain";
 import { Effect, Schema } from "effect";
 import { noPullRequestCi, readPullRequestCi } from "./local-ci-status.ts";
 import { collectLocalStatus, LocalStatusError } from "./local-status.ts";
@@ -45,6 +49,34 @@ const excerpt = (value: string, limit = 2000) => {
     : `${plain.slice(0, limit)}\n… truncated; --json contains the saved value`;
 };
 
+const describeAutomaticRepair = (
+  state: SessionState,
+  ci: PullRequestCi,
+): LocalAutomaticRepair | undefined => {
+  const status = automaticRepairStatus(state);
+  if (status === null) return undefined;
+  const frozenRepair = state.candidate?.binding.repair;
+  if (
+    state.status === "failed" &&
+    frozenRepair &&
+    frozenRepair.number === state.pullRequest?.number
+  )
+    return { status, nextAction: "retry" };
+  const hasFailedCheck =
+    !ci.detailsTruncated && ci.checks.some((check) => check.status === "failing");
+  return {
+    status,
+    nextAction: status !== "available" && hasFailedCheck && canStartRepair(state) ? "repair" : null,
+  };
+};
+
+const repairStatusLabels: Record<LocalAutomaticRepair["status"], string> = {
+  available: "available (watch eligibility and a failed Actions job are required)",
+  running: "in progress in saved session",
+  used: "used for this PR",
+  unavailable: "unavailable in this session phase",
+};
+
 /** Text is a compact view; JSON retains the authoritative saved fields and opaque check output. */
 const formatStatus = (snapshot: LocalStatus, detail: boolean) => {
   const lines = [
@@ -70,7 +102,7 @@ const formatStatus = (snapshot: LocalStatus, detail: boolean) => {
       `Updated: ${Number.isNaN(updated.getTime()) ? "unavailable" : updated.toISOString()}`,
     );
     if (state.pullRequest) lines.push(`PR: ${state.pullRequest.url}`);
-    if (item.ci) {
+    if (item.ci && item.ci.status !== "no-pr") {
       const { status, headSha, error, checks, totalChecks, checksUrl, detailsTruncated } = item.ci;
       lines.push(
         `GitHub CI: ${status === "none" ? "no checks reported" : status}${headSha ? ` (${headSha.slice(0, 12)})` : ""}`,
@@ -89,6 +121,14 @@ const formatStatus = (snapshot: LocalStatus, detail: boolean) => {
           `GitHub returned a partial detail list (${totalChecks} total contexts). See the full checks page.`,
         );
       if (checksUrl) lines.push(`  PR checks: ${checksUrl}`);
+    }
+    if (item.automaticRepair) {
+      const { status, nextAction } = item.automaticRepair;
+      lines.push(`Automatic repair: ${repairStatusLabels[status]}`);
+      if (nextAction)
+        lines.push(
+          `Next: pnpm ${nextAction} --issue ${item.issue} (use the same state directory and checks)`,
+        );
     }
     if (state.failure) lines.push(`Failure: ${excerpt(state.failure, detail ? 2000 : 250)}`);
     if (state.candidate) {
@@ -158,10 +198,16 @@ const command = Effect.gen(function* () {
   }).pipe(
     Effect.flatMap((local) =>
       Effect.forEach(local.sessions, (item) => {
-        const pr = item.state?.pullRequest;
+        const state = item.state;
+        const pr = state?.pullRequest;
         if (!values.ci) return Effect.succeed(item);
-        return pr
-          ? readPullRequestCi(repo, pr.number).pipe(Effect.map((ci) => ({ ...item, ci })))
+        return state && pr
+          ? readPullRequestCi(repo, pr.number).pipe(
+              Effect.map((ci) => {
+                const automaticRepair = describeAutomaticRepair(state, ci);
+                return { ...item, ci, ...(automaticRepair ? { automaticRepair } : {}) };
+              }),
+            )
           : Effect.succeed({ ...item, ci: noPullRequestCi });
       }).pipe(Effect.map((sessions) => ({ ...local, sessions }))),
     ),

@@ -78,12 +78,27 @@ export const SessionState = Schema.Struct({
 });
 export type SessionState = typeof SessionState.Type;
 
+/** Describe the saved attempt for the current PR, independently of live CI. */
+export const automaticRepairStatus = (
+  state: SessionState,
+): "available" | "running" | "used" | "unavailable" | null => {
+  const number = state.pullRequest?.number;
+  if (number === undefined) return null;
+  const attemptedRun = state.automaticRepairRuns?.[number];
+  if (attemptedRun === undefined) return state.status === "published" ? "available" : "unavailable";
+  if (
+    attemptedRun === state.runId &&
+    ["running", "validating", "publishing"].includes(state.status)
+  )
+    return "running";
+  return "used";
+};
+
 /** Failed edits can be retried explicitly. Frozen patches must reconcile publication first. */
 export const canStartRepair = (state: SessionState, automatic = false): boolean => {
   const number = state.pullRequest?.number;
   if (number === undefined) return false;
-  if (automatic)
-    return state.status === "published" && state.automaticRepairRuns?.[number] === undefined;
+  if (automatic) return automaticRepairStatus(state) === "available";
   return (
     state.status === "published" ||
     (state.status === "failed" && state.repair?.number === number && state.candidate === null)

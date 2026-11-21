@@ -65,6 +65,15 @@ also works. After an edit or check failure, use `pnpm repair` to start a manual
 attempt against the current PR head. After a publication failure with a frozen
 patch, use `pnpm retry` to reconcile the existing attempt.
 
+`pnpm status --issue N --ci` shows the saved automatic attempt for the PR.
+Available means the budget is unused and the saved phase permits admission.
+Watch settings, issue labels and Actions logs still determine eligibility.
+In progress describes the saved run phase. Used means the PR has spent its
+attempt, including when the head has changed. JSON includes
+`automaticRepair.status` and `automaticRepair.nextAction` when a PR is saved.
+Manual repair guidance depends on the current check results. Reconciliation
+guidance for a failed publication is available even if live CI cannot be read.
+
 ## Acceptance
 
 - A red job on the saved PR head supplies context, while a passing snapshot

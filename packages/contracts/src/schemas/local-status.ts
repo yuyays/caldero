@@ -26,6 +26,12 @@ export const PullRequestCi = Schema.Struct({
 });
 export type PullRequestCi = typeof PullRequestCi.Type;
 
+export const LocalAutomaticRepair = Schema.Struct({
+  status: Schema.Literals(["available", "running", "used", "unavailable"]),
+  nextAction: Schema.NullOr(Schema.Literals(["repair", "retry"])),
+});
+export type LocalAutomaticRepair = typeof LocalAutomaticRepair.Type;
+
 /** Saved local execution state, suitable for a CLI or a future authenticated UI. */
 export const LocalSessionStatus = Schema.Struct({
   issue: Schema.Int,
@@ -33,6 +39,7 @@ export const LocalSessionStatus = Schema.Struct({
   state: Schema.NullOr(SessionState),
   error: Schema.NullOr(Schema.String),
   ci: Schema.optionalKey(PullRequestCi),
+  automaticRepair: Schema.optionalKey(LocalAutomaticRepair),
 });
 export type LocalSessionStatus = typeof LocalSessionStatus.Type;
 

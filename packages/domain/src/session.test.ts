@@ -1,5 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import { decide, type Decision, Events, initialSession, type SessionEvent } from "./session.ts";
+import {
+  automaticRepairStatus,
+  decide,
+  type Decision,
+  Events,
+  initialSession,
+  type SessionEvent,
+} from "./session.ts";
 
 const now = 1_800_000_000_000;
 const repo = { owner: "acme", name: "shop" };
@@ -93,6 +100,7 @@ describe("decide", () => {
   it("blocks another automatic repair on the same PR at a new head", () => {
     const pr = { number: 42, url: "https://example.test/42" };
     const published = run([...proposed, Events.PublishSucceeded.make(pr)]).state;
+    expect(automaticRepairStatus(published)).toBe("available");
     const target = { number: 42, headRef: "caldero/7-v1", headSha: "pr-head", baseRef: "main" };
     const first = decide(
       published,
@@ -105,10 +113,12 @@ describe("decide", () => {
       now,
     );
     expect(first.result).toBe("applied");
+    expect(automaticRepairStatus(first.state)).toBe("running");
     const repaired = run(
       [answered(2), validated(2, "sha256:repair"), Events.PublishSucceeded.make(pr)],
       first.state,
     ).state;
+    expect(automaticRepairStatus(repaired)).toBe("used");
     const request = {
       expectedRevision: repaired.revision,
       target: { ...target, headSha: "new-pr-head" },
