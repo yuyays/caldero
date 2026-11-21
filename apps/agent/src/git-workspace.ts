@@ -1,5 +1,6 @@
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+import type { PublicCheck } from "@caldero/domain";
 import { Effect, Schema, Semaphore } from "effect";
 import { Base64, Hex } from "effect/encoding";
 import {
@@ -47,6 +48,7 @@ export const makeGitWorkspace = Effect.fn("makeGitWorkspace")(function* (options
   readonly root: string;
   /** Shell commands that must all pass for a candidate to be proposed. */
   readonly checks: ReadonlyArray<string>;
+  readonly publicChecks?: ReadonlyArray<PublicCheck>;
 }) {
   const github = yield* GitHub;
   const store = yield* WorkspaceStore;
@@ -178,12 +180,18 @@ export const makeGitWorkspace = Effect.fn("makeGitWorkspace")(function* (options
 
     let passed = true;
     const evidence: Array<string> = [];
-    for (const check of checks) {
+    const publicChecks = options.publicChecks ?? [];
+    for (const check of [...checks, ...publicChecks.map(({ command }) => command)]) {
       const result = yield* exec(check, frozen, true);
       passed &&= result.exitCode === 0;
       evidence.push(`$ ${check}\n${result.stdout}${result.stderr}(exit ${result.exitCode})`);
     }
-    return { passed, patch, evidence: evidence.join("\n\n") || "No checks are configured." };
+    return {
+      passed,
+      patch,
+      evidence: evidence.join("\n\n") || "No checks are configured.",
+      ...(passed && publicChecks.length > 0 ? { publicChecks } : {}),
+    };
   });
 
   const patch = Effect.fn("GitWorkspace.patch")(function* (digest: string) {

@@ -18,6 +18,15 @@ Publication reuses the Pi durable task, per-candidate journal, create-only branc
 responses reconcile instead of republishing. Input during publication queues, and the next candidate must validate
 again. Stop is refused after publishing starts because the remote outcome may already have landed.
 
+For a single local issue, an operator can designate check labels and commands for
+the new PR with `--pr-check LABEL=COMMAND`. They run in the candidate workspace
+and must pass. The successful candidate stores the opted-in checks separately
+from private validation output. Initial publication freezes the rendered
+verification text in the existing journal, so reconciliation uses the same body.
+Existing PRs and candidates without a saved public check have their original
+publication behavior. Review covers any criteria or later changes beyond the
+recorded checks.
+
 ## Compatibility
 
 Keep historical `policy`, `awaitingApproval`, `rejected`, and `decidedBy` fields readable in stored session JSON and

@@ -9,6 +9,7 @@ import {
   automaticRepairStatus,
   canStartRepair,
   Events,
+  type PublicCheck,
   type RepairTarget,
   type Repo,
 } from "@caldero/domain";
@@ -211,6 +212,7 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   readonly issue: number;
   readonly stateDir: string;
   readonly checks: ReadonlyArray<string>;
+  readonly publicChecks?: ReadonlyArray<PublicCheck>;
   readonly pi: Pick<SessionHostOptions, "models" | "model" | "thinkingLevel">;
   /** Watch discovery can reopen saved work without admitting an idle, now-ineligible issue. */
   readonly admit?: boolean;
@@ -222,7 +224,10 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
     readonly admissionOpen?: Effect.Effect<boolean>;
   };
 }) {
-  yield* validateLocalIssue(options.issue, options.checks);
+  yield* validateLocalIssue(options.issue, [
+    ...options.checks,
+    ...(options.publicChecks ?? []).map(({ command }) => command),
+  ]);
   yield* refuseLegacyIssue(options.repo, options.issue);
   const root = join(options.stateDir, "workspace");
   const home = join(options.stateDir, "shell-home");
@@ -238,6 +243,10 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   if (options.retry && saved?.status !== "failed")
     return yield* new LocalRunnerError({
       message: `Only failed sessions can be retried. Resume active work with pnpm --filter @caldero/agent local --issue ${options.issue}, using the same --state-dir and --check options.`,
+    });
+  if (options.retry && saved?.candidate && options.publicChecks?.length)
+    return yield* new LocalRunnerError({
+      message: "Retry will reuse the frozen candidate and its verification. Omit --pr-check.",
     });
   if (options.retry && saved?.repair && !saved.candidate)
     return yield* new LocalRunnerError({
@@ -298,6 +307,7 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
     LocalWorkspace.layer({
       root,
       checks: options.checks,
+      ...(options.publicChecks === undefined ? {} : { publicChecks: options.publicChecks }),
       store: makeDiskWorkspaceStore(join(options.stateDir, "blobs")),
       env: new LocalExecutionEnv(join(root, "work"), home),
     }).pipe(Layer.provide(Layer.succeed(GitHub, github))),

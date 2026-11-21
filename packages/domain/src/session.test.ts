@@ -460,9 +460,25 @@ describe("decide", () => {
   });
 
   it("retries a retryable publish with a new instruction, then fails after the limit", () => {
-    const once = run([...proposed, publishFailed("retryable")]);
-    expect(once.instructions[0]).toMatchObject({ _tag: "Publish", binding: firstBinding });
-    const first = run([...proposed]).instructions[0];
+    const publicChecks = [{ label: "Demo reload", command: "pnpm test demo" }];
+    const checked = [
+      labeled,
+      answered(1),
+      Events.Validated.make({
+        runId: 1,
+        patchDigest: firstBinding.patchDigest,
+        evidence: "private check output",
+        publicChecks,
+      }),
+    ];
+    const once = run([...checked, publishFailed("retryable")]);
+    expect(once.instructions[0]).toMatchObject({
+      _tag: "Publish",
+      binding: firstBinding,
+      publicChecks,
+    });
+    expect(once.instructions[0]).not.toHaveProperty("evidence");
+    const first = run(checked).instructions[0];
     expect(once.instructions[0]?.instructionId).not.toBe(first?.instructionId);
 
     const exhausted = run([

@@ -519,9 +519,13 @@ describe("GitHubApp", () => {
               ? result.pullRequest
               : yield* next.publish(7, binding, patch, journal);
           expect(pr.number).toBe(101);
-          expect(http.posts.filter((post) => post.path === "/repos/acme/app/pulls")).toHaveLength(
-            1,
-          );
+          expect(http.posts.filter((post) => post.path === "/repos/acme/app/pulls")).toMatchObject([
+            {
+              body: {
+                body: `Closes #7\n\nValidated patch: ${binding.patchDigest}\nBase: main at base-1`,
+              },
+            },
+          ]);
           const commits = http.posts.filter((post) => post.path.endsWith("/git/commits"));
           expect(
             commits.every((post) => JSON.stringify(post.body) === JSON.stringify(commits[0]?.body)),
@@ -529,6 +533,32 @@ describe("GitHubApp", () => {
         }),
     );
   }
+
+  it.effect("uses the original verification text when recovery creates the PR", () =>
+    Effect.gen(function* () {
+      const http = yield* publisherPeer();
+      http.dropAfter("/repos/acme/app/git/refs");
+      const { journal } = memoryJournal();
+      const first = yield* adapter(http.url);
+      const check = {
+        label: "Demo reload accepts existing requests",
+        command: "pnpm --filter @pcc/web test src/lib/demo.test.ts",
+      };
+      expect(
+        yield* first.publish(7, binding, patch, journal, [check]).pipe(Effect.flip),
+      ).toMatchObject({ kind: "ambiguous" });
+      const next = yield* adapter(http.url);
+      expect(yield* next.reconcile(7, binding, journal)).toMatchObject({
+        found: "pullRequest",
+        pullRequest: { number: 101 },
+      });
+      const prPosts = http.posts.filter((post) => post.path === "/repos/acme/app/pulls");
+      expect(prPosts).toHaveLength(1);
+      for (const text of ["## Verification", "locally", check.label, check.command]) {
+        expect(prPosts[0]?.body).toMatchObject({ body: expect.stringContaining(text) });
+      }
+    }),
+  );
 
   for (const crashAfterSave of [1, 2, 3, 4, 5, 6, 7]) {
     it.effect(

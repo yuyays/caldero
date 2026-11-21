@@ -198,6 +198,9 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
                       runId,
                       patchDigest: validation.patch.digest,
                       evidence: validation.evidence,
+                      ...(validation.publicChecks === undefined
+                        ? {}
+                        : { publicChecks: validation.publicChecks }),
                     })
                   : Events.ValidationFailed.make({ runId, evidence: validation.evidence }),
               ),
@@ -205,13 +208,15 @@ export const openSessionHost = Effect.fn("openSessionHost")(function* (
                 Effect.succeed(Events.ValidationFailed.make({ runId, evidence: error.message })),
               ),
             ),
-      Publish: ({ binding }) =>
+      Publish: ({ binding, publicChecks }) =>
         workspace.patch(binding.patchDigest).pipe(
           // The candidate's frozen patch is gone; publishing it again cannot help.
           Effect.mapError(
             (error) => new PublishError({ kind: "permanent", message: error.message }),
           ),
-          Effect.flatMap((patch) => github.publish(state.issue, binding, patch, journal)),
+          Effect.flatMap((patch) =>
+            github.publish(state.issue, binding, patch, journal, publicChecks),
+          ),
           Effect.map((pullRequest): SessionEvent => Events.PublishSucceeded.make(pullRequest)),
           Effect.catchTag("PublishError", (error) =>
             Effect.succeed(Events.PublishFailed.make({ kind: error.kind, message: error.message })),
