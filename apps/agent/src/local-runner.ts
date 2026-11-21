@@ -195,14 +195,11 @@ const prepareSavedIssue = Effect.fn("prepareSavedIssue")(function* (options: {
   );
 });
 
-/** The caller's scope owns this host, SQLite and lock; reopening resumes nonterminal work in the same issue. */
-type LoadRepair = (
-  number: number,
-) => Effect.Effect<
-  { readonly target: RepairTarget; readonly context: string } | undefined,
-  GitHubError
->;
+type RepairInput = { readonly target: RepairTarget; readonly context: string };
 
+type LoadRepair = (number: number) => Effect.Effect<RepairInput | undefined, GitHubError>;
+
+/** The caller's scope owns the host, SQLite and lock. Reopening resumes active work. */
 export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   readonly repo: Repo;
   readonly issue: number;
@@ -237,7 +234,7 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
       message:
         "The repair stopped before a checked patch was saved. Use the PR to continue manually.",
     });
-  let repair;
+  let repair: RepairInput | undefined;
   if (options.repair) {
     const number = saved?.pullRequest?.number;
     const attemptedRun = number === undefined ? undefined : saved?.automaticRepairRuns?.[number];
@@ -250,7 +247,7 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
       if (
         saved?.status !== "published" ||
         number === undefined ||
-        (options.repair.automatic && (options.admit === false || attemptedRun !== undefined))
+        (options.repair.automatic && (options.admit !== true || attemptedRun !== undefined))
       )
         return yield* new LocalRunnerError({
           message:
