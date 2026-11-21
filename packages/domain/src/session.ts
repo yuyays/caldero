@@ -78,6 +78,18 @@ export const SessionState = Schema.Struct({
 });
 export type SessionState = typeof SessionState.Type;
 
+/** Failed edits can be retried explicitly. Frozen patches must reconcile publication first. */
+export const canStartRepair = (state: SessionState, automatic = false): boolean => {
+  const number = state.pullRequest?.number;
+  if (number === undefined) return false;
+  if (automatic)
+    return state.status === "published" && state.automaticRepairRuns?.[number] === undefined;
+  return (
+    state.status === "published" ||
+    (state.status === "failed" && state.repair?.number === number && state.candidate === null)
+  );
+};
+
 export const SessionEvent = Schema.TaggedUnion({
   IssueLabeled: { context: Schema.String, baseSha: Schema.String, baseRef: Schema.String },
   UserInput: { text: Schema.String },
@@ -243,10 +255,9 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
     },
     Repair: ({ expectedRevision, target, context, automatic }) => {
       if (
-        state.status !== "published" ||
+        !canStartRepair(state, automatic) ||
         state.revision !== expectedRevision ||
-        state.pullRequest?.number !== target.number ||
-        (automatic && state.automaticRepairRuns?.[String(target.number)] !== undefined)
+        state.pullRequest?.number !== target.number
       )
         return unchanged("stale");
       const runId = state.runId + 1;

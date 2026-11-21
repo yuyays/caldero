@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { Events, type RepairTarget, type Repo } from "@caldero/domain";
+import { canStartRepair, Events, type RepairTarget, type Repo } from "@caldero/domain";
 import { Effect, Layer, Schema } from "effect";
 import { makeDiskWorkspaceStore } from "./disk-workspace-store.ts";
 import { readLocalSession } from "./local-status.ts";
@@ -210,7 +210,11 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   readonly admit?: boolean;
   /** Explicitly retry only an existing failed session; never admit new work. */
   readonly retry?: boolean;
-  readonly repair?: { readonly automatic?: boolean; readonly load: LoadRepair };
+  readonly repair?: {
+    readonly automatic?: boolean;
+    readonly load: LoadRepair;
+    readonly admissionOpen?: Effect.Effect<boolean>;
+  };
 }) {
   yield* validateLocalIssue(options.issue, options.checks);
   yield* refuseLegacyIssue(options.repo, options.issue);
@@ -232,7 +236,7 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   if (options.retry && saved?.repair && !saved.candidate)
     return yield* new LocalRunnerError({
       message:
-        "The repair stopped before a checked patch was saved. Use the PR to continue manually.",
+        "The repair stopped before a checked patch was saved. Use pnpm repair to start another attempt.",
     });
   let repair: RepairInput | undefined;
   if (options.repair) {
@@ -245,13 +249,14 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
       ["running", "validating", "publishing"].includes(saved.status);
     if (!resume) {
       if (
-        saved?.status !== "published" ||
+        saved == null ||
         number === undefined ||
-        (options.repair.automatic && (options.admit !== true || attemptedRun !== undefined))
+        !canStartRepair(saved, options.repair.automatic) ||
+        (options.repair.automatic && options.admit !== true)
       )
         return yield* new LocalRunnerError({
           message:
-            "Repair requires an eligible published Caldero session with a saved pull request",
+            "Repair requires an eligible saved pull request. Use pnpm retry to reconcile a failed publication.",
           ...(options.repair.automatic ? { reason: "ineligible" as const } : {}),
         });
       repair = yield* options.repair.load(number);
@@ -308,13 +313,18 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
     ...options.pi,
   }).pipe(Effect.provide(serviceContext));
   if (repair && saved) {
+    if (options.repair?.admissionOpen && !(yield* options.repair.admissionOpen))
+      return yield* new LocalRunnerError({
+        message: "The watcher stopped before repair was admitted",
+        reason: "ineligible",
+      });
     const result = yield* host.deliver(
       Events.Repair.make({
         ...repair,
         expectedRevision: saved.revision,
         ...(options.repair?.automatic ? { automatic: true } : {}),
       }),
-      `local-repair:${saved.revision}`,
+      `${options.repair?.automatic ? "auto-repair" : "local-repair"}:${saved.revision}`,
     );
     if (result === "stale")
       return yield* new LocalRunnerError({

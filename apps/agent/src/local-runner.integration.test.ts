@@ -170,7 +170,7 @@ describe("Local durable runner", () => {
         });
       };
       const watchPhase = (
-        phase: "initial" | "unlabeled" | "green" | "interrupt" | "resume" | "spent",
+        phase: "initial" | "unlabeled" | "green" | "stopping" | "interrupt" | "resume" | "spent",
       ) =>
         Effect.scoped(
           Effect.gen(function* () {
@@ -199,7 +199,11 @@ describe("Local durable runner", () => {
                 ? {}
                 : {
                     repairIssue: Effect.fn("fixture.autoRepair")(
-                      function* (issue: number, admit: boolean) {
+                      function* (
+                        issue: number,
+                        admit: boolean,
+                        admissionOpen: Effect.Effect<boolean>,
+                      ) {
                         yield* openLocalIssue({
                           ...options,
                           issue,
@@ -207,10 +211,12 @@ describe("Local durable runner", () => {
                           pi: phase === "interrupt" ? paused : scriptedModels(),
                           repair: {
                             automatic: true,
+                            admissionOpen,
                             load: (number) =>
-                              Effect.sync(() => {
+                              Effect.gen(function* () {
                                 probes++;
                                 if (phase === "green") return undefined;
+                                if (phase === "stopping") yield* stop;
                                 return {
                                   target: {
                                     number,
@@ -245,11 +251,13 @@ describe("Local durable runner", () => {
       expect(probes).toBe(0);
       yield* watchPhase("green");
       expect(probes).toBe(1);
+      yield* watchPhase("stopping");
+      expect(commits).toEqual([]);
       yield* watchPhase("interrupt");
       expect(commits).toEqual([]);
       yield* watchPhase("resume");
       yield* watchPhase("spent");
-      expect(probes).toBe(2);
+      expect(probes).toBe(3);
       expect(commits).toEqual([100]);
       expect(fake.state.pullRequests).toHaveLength(1);
     }),

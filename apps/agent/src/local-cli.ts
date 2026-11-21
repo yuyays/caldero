@@ -196,13 +196,13 @@ const command = Effect.gen(function* () {
       ...(values["auto-repair"]
         ? {
             repairIssue: Effect.fn("LocalWatch.repairIssue")(
-              function* (number: number, admit: boolean) {
+              function* (number: number, admit: boolean, admissionOpen: Effect.Effect<boolean>) {
                 const host = yield* openLocalIssue({
                   ...localIssue,
                   issue: number,
                   admit,
                   stateDir: join(stateRoot, String(number)),
-                  repair: { automatic: true, load: loadRepair },
+                  repair: { automatic: true, load: loadRepair, admissionOpen },
                 }).pipe(Effect.provideService(GitHub, github));
                 yield* host.drain();
                 const { state } = yield* host.view();

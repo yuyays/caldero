@@ -118,6 +118,19 @@ describe("decide", () => {
       decide(repaired, Events.Repair.make({ ...request, automatic: true }), now),
     ).toMatchObject({ result: "stale", instructions: [] });
     expect(decide(repaired, Events.Repair.make(request), now).result).toBe("applied");
+    const failedEdit = run(
+      [Events.RunFailed.make({ runId: 2, reason: "model stopped" })],
+      first.state,
+    ).state;
+    const failedPublish = run(
+      [answered(2), validated(2, "sha256:repair"), publishFailed("permanent")],
+      first.state,
+    ).state;
+    const resume = (revision: number, automatic = false) =>
+      Events.Repair.make({ ...request, expectedRevision: revision, automatic });
+    expect(decide(failedEdit, resume(failedEdit.revision, true), now).result).toBe("stale");
+    expect(decide(failedEdit, resume(failedEdit.revision), now).result).toBe("applied");
+    expect(decide(failedPublish, resume(failedPublish.revision), now).result).toBe("stale");
   });
 
   it("reconciles a failed frozen publication and refuses retries outside failed state", () => {

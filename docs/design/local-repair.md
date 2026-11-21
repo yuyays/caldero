@@ -1,7 +1,8 @@
 # Local CI repair
 
 `pnpm repair --issue N --check 'COMMAND'` explicitly asks Caldero to make one
-repair attempt on a saved, published Caldero session. It uses the local Pi
+repair attempt on a saved PR. The session must be published or have failed a
+repair before saving a checked patch. It uses the local Pi
 profile, the same issue lock and session directory, the configured GitHub App
 to write, and the operator's signed-in GitHub CLI to read Actions logs.
 
@@ -47,13 +48,20 @@ the watcher's settled issues. A new attempt requires an open issue with the
 watch label in the current scan. The published session, PR ownership, head
 and failing Actions job are checked before admission.
 
+Each scan checks eligible published sessions serially after normal issue work.
+A single completed failed Actions job can trigger repair while other checks are
+pending. Enabling the flag lets Caldero send a bounded log excerpt to Pi and
+spend model tokens without asking about each run.
+
 The issue database records the automatic attempt for that PR in the same
 transaction that starts repair. A new head, a failed local check, or a
 restart cannot reset the attempt. Green CI, missing logs and unsuccessful
 admission leave it available. A watcher restarted with the flag resumes an
 already admitted automatic repair from the same state root, even if the issue
 has since been closed or unlabeled. The ordinary single-issue resume command
-also works. Manual repair keeps its existing preconditions and budget.
+also works. After an edit or check failure, use `pnpm repair` to start a manual
+attempt against the current PR head. After a publication failure with a frozen
+patch, use `pnpm retry` to reconcile the existing attempt.
 
 ## Acceptance
 

@@ -231,8 +231,9 @@ Keep the issue open and labeled with the watch label. The watcher considers
 saved PRs from its own issue history and uses your signed-in `gh` to inspect
 Actions. It gets one automatic attempt per PR, including across restarts and
 head changes. Use the same state root and flag to resume an interrupted repair.
-If CI stays red, inspect it with `pnpm status --issue N --ci` and decide what to
-do next.
+If CI stays red, inspect it with `pnpm status --issue N --ci`. Use `pnpm repair`
+for a fresh manual attempt after a failed edit or check. Use `pnpm retry` for
+a failed publication with a checked patch.
 
 ### Watch labeled issues locally
 

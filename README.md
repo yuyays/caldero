@@ -11,14 +11,15 @@ issue labeled "agent" ──► session ──► change ──► validate ─�
 
 The model cannot declare its own work valid: only the workspace's check result
 starts publication. Caldero never merges, never force-updates a branch, and never
-overwrites an existing ref during initial publication. Explicit CI repair can
+overwrites an existing ref during initial publication. Local CI repair can
 append one checked commit to the existing PR branch.
 
 ## Status
 
 Alpha. The local path is exercised end to end; the Cloudflare path is implemented but
-has never been validated as a deployment. Slack, cron, a scheduler and automatic CI
-repair are future work. The [full status table](docs/architecture.md#implementation-and-deployment-status)
+has never been validated as a deployment. The local watcher supports opt-in
+automatic CI repair. Slack, cron, and a scheduler are future work.
+The [full status table](docs/architecture.md#implementation-and-deployment-status)
 tracks each piece and says what is unbuilt.
 
 ## Requirements
