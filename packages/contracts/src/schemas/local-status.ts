@@ -1,4 +1,4 @@
-import { Repo, SessionState } from "@caldero/domain";
+import { AutomaticRepairGuidance, Repo, SessionState } from "@caldero/domain";
 import { Schema } from "effect";
 
 /** Optional live observation of the current GitHub PR head. */
@@ -33,6 +33,7 @@ export const LocalSessionStatus = Schema.Struct({
   state: Schema.NullOr(SessionState),
   error: Schema.NullOr(Schema.String),
   ci: Schema.optionalKey(PullRequestCi),
+  automaticRepair: Schema.optionalKey(AutomaticRepairGuidance),
 });
 export type LocalSessionStatus = typeof LocalSessionStatus.Type;
 

@@ -14,6 +14,7 @@ import { collectLocalStatus } from "./local-status.ts";
 import { scriptedModels } from "./testing.ts";
 import { openLocalWatcher } from "./local-watch.ts";
 import { LocalStatus } from "@caldero/contracts/local-status";
+import { GitHub, PublishError } from "./ports.ts";
 
 const repo = { owner: "acme", name: "app" };
 const directory = Effect.acquireRelease(
@@ -143,6 +144,7 @@ describe("Read-only local status", () => {
       });
       const offline = JSON.parse((yield* cli(false)).stdout);
       expect(offline.sessions[0]).not.toHaveProperty("ci");
+      expect(offline.sessions[0]).not.toHaveProperty("automaticRepair");
       expect(yield* Effect.promise(() => readdir(root))).not.toContain("gh-called");
       yield* Effect.promise(() =>
         writeFile(
@@ -163,6 +165,7 @@ describe("Read-only local status", () => {
       const online = JSON.parse((yield* cli(true)).stdout);
       expect(online.sessions[0]).toMatchObject({
         state: { status: "published", pullRequest: { number: 100 } },
+        automaticRepair: { status: "available", nextAction: null },
         ci: {
           status: "failing",
           headSha: sha,
@@ -177,6 +180,7 @@ describe("Read-only local status", () => {
       });
       const terminal = (yield* cli(true, false)).stdout;
       expect(terminal).toContain(`Failed: CI / tests unit — ${link}`);
+      expect(terminal).toContain("Automatic repair: available");
       expect(terminal).not.toContain(oldLink);
       expect(terminal).not.toContain("Failed: CI / cancel");
       yield* writeRollup({ state: "FAILURE", contexts: { ...contexts, totalCount: 101 } });
@@ -210,6 +214,52 @@ describe("Read-only local status", () => {
         state: { status: "published" },
         ci: { status: "unavailable" },
       });
+      const loadRepair = (number: number) =>
+        Effect.succeed({
+          target: { number, headRef: "caldero/7-v1", headSha: sha, baseRef: "main" },
+          context: "Fix the failing test",
+        });
+      const repairOptions = { repo, issue: 7, stateDir: join(root, "7"), pi: scriptedModels() };
+      yield* Effect.scoped(
+        openLocalIssue({
+          ...repairOptions,
+          checks: ["false"],
+          admit: true,
+          repair: { automatic: true, load: loadRepair },
+        }).pipe(
+          Effect.flatMap((host) => host.drain()),
+          Effect.provide(github.layer),
+        ),
+      );
+      yield* writeRollup({ state: "FAILURE", contexts });
+      expect(JSON.parse((yield* cli(true)).stdout).sessions[0]).toMatchObject({
+        state: { status: "failed" },
+        automaticRepair: { status: "used", nextAction: "repair" },
+      });
+      expect((yield* cli(true, false)).stdout).toContain("Next: pnpm repair --issue 7");
+
+      const fake = yield* GitHub.pipe(Effect.provide(github.layer));
+      const refusingPublish = GitHub.of({
+        ...fake,
+        publish: () => Effect.fail(new PublishError({ kind: "permanent", message: "Head moved" })),
+      });
+      yield* Effect.scoped(
+        openLocalIssue({
+          ...repairOptions,
+          pi: scriptedModels(),
+          checks: ["test -f notes.txt"],
+          repair: { load: loadRepair },
+        }).pipe(
+          Effect.flatMap((host) => host.drain()),
+          Effect.provideService(GitHub, refusingPublish),
+        ),
+      );
+      yield* Effect.promise(() => rm(response));
+      expect(JSON.parse((yield* cli(true)).stdout).sessions[0]).toMatchObject({
+        ci: { status: "unavailable" },
+        automaticRepair: { status: "used", nextAction: "retry" },
+      });
+      expect((yield* cli(true, false)).stdout).toContain("Next: pnpm retry --issue 7");
       expect(github.state.pullRequests).toHaveLength(1);
     }),
   );

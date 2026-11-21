@@ -1,5 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
-import { decide, type Decision, Events, initialSession, type SessionEvent } from "./session.ts";
+import {
+  automaticRepairGuidance,
+  automaticRepairStatus,
+  decide,
+  type Decision,
+  Events,
+  initialSession,
+  type SessionEvent,
+} from "./session.ts";
 
 const now = 1_800_000_000_000;
 const repo = { owner: "acme", name: "shop" };
@@ -73,6 +81,7 @@ describe("decide", () => {
       binding: { baseSha: "pr-head", repair: target, patchDigest: "sha256:repair" },
     });
     const failedPublish = decide(checked.state, publishFailed("permanent"), now).state;
+    expect(automaticRepairStatus(failedPublish)).toBe("unavailable");
     const retry = decide(
       failedPublish,
       Events.Retry.make({ expectedRevision: failedPublish.revision }),
@@ -93,6 +102,7 @@ describe("decide", () => {
   it("blocks another automatic repair on the same PR at a new head", () => {
     const pr = { number: 42, url: "https://example.test/42" };
     const published = run([...proposed, Events.PublishSucceeded.make(pr)]).state;
+    expect(automaticRepairStatus(published)).toBe("available");
     const target = { number: 42, headRef: "caldero/7-v1", headSha: "pr-head", baseRef: "main" };
     const first = decide(
       published,
@@ -105,10 +115,12 @@ describe("decide", () => {
       now,
     );
     expect(first.result).toBe("applied");
+    expect(automaticRepairStatus(first.state)).toBe("running");
     const repaired = run(
       [answered(2), validated(2, "sha256:repair"), Events.PublishSucceeded.make(pr)],
       first.state,
     ).state;
+    expect(automaticRepairStatus(repaired)).toBe("used");
     const request = {
       expectedRevision: repaired.revision,
       target: { ...target, headSha: "new-pr-head" },
@@ -131,6 +143,23 @@ describe("decide", () => {
     expect(decide(failedEdit, resume(failedEdit.revision, true), now).result).toBe("stale");
     expect(decide(failedEdit, resume(failedEdit.revision), now).result).toBe("applied");
     expect(decide(failedPublish, resume(failedPublish.revision), now).result).toBe("stale");
+  });
+
+  it("offers publication recovery for a failed follow-up with a saved PR", () => {
+    expect(automaticRepairGuidance(fresh(), true)).toBeNull();
+
+    const failed = run([
+      ...proposed,
+      input("Follow-up while publishing"),
+      Events.PublishSucceeded.make({ number: 42, url: "https://example.test/42" }),
+      answered(2),
+      validated(2, "sha256:follow-up"),
+      publishFailed("permanent"),
+    ]).state;
+    expect(automaticRepairGuidance(failed, false)).toEqual({
+      status: "unavailable",
+      nextAction: "retry",
+    });
   });
 
   it("reconciles a failed frozen publication and refuses retries outside failed state", () => {

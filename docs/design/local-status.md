@@ -55,6 +55,13 @@ When details are partial, the terminal links to the full checks page for
 individual failures. Cancelled checks are distinct from failures. An issue
 without a saved PR reports `no-pr`; offline snapshots omit CI.
 
+With `--ci` and a saved PR, text and JSON also show the
+[automatic repair state](local-repair.md#automatic-repair-in-local-watch).
+The JSON field `automaticRepair` holds the saved attempt status and an optional
+recovery action as `nextAction` (null when there is no hint). A fresh manual repair
+hint uses the current check results, while a publication retry comes from the
+saved candidate. Offline status omits `automaticRepair`.
+
 A response for a different head or a GitHub error leaves the saved snapshot
 available and marks CI unavailable. CI results and lookup status are data
 and do not change the local command's exit status. GitHub evaluates merge

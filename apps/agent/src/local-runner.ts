@@ -5,7 +5,13 @@ import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { canStartRepair, Events, type RepairTarget, type Repo } from "@caldero/domain";
+import {
+  automaticRepairStatus,
+  canStartRepair,
+  Events,
+  type RepairTarget,
+  type Repo,
+} from "@caldero/domain";
 import { Effect, Layer, Schema } from "effect";
 import { makeDiskWorkspaceStore } from "./disk-workspace-store.ts";
 import { readLocalSession } from "./local-status.ts";
@@ -241,12 +247,8 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   let repair: RepairInput | undefined;
   if (options.repair) {
     const number = saved?.pullRequest?.number;
-    const attemptedRun = number === undefined ? undefined : saved?.automaticRepairRuns?.[number];
     const resume =
-      options.repair.automatic &&
-      saved != null &&
-      attemptedRun === saved.runId &&
-      ["running", "validating", "publishing"].includes(saved.status);
+      options.repair.automatic && saved != null && automaticRepairStatus(saved) === "running";
     if (!resume) {
       if (
         saved == null ||
