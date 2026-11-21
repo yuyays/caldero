@@ -69,7 +69,8 @@ patch, use `pnpm retry` to reconcile the existing attempt.
 Available means the budget is unused and the saved phase permits admission.
 Watch settings, issue labels and Actions logs still determine eligibility.
 In progress describes the saved run phase. Used means the PR has spent its
-attempt, including when the head has changed. JSON includes
+attempt, including when the head has changed. Unavailable means the PR has an
+unused attempt but the saved phase does not admit one. JSON includes
 `automaticRepair.status` and `automaticRepair.nextAction` when a PR is saved.
 Manual repair guidance depends on the current check results. Reconciliation
 guidance for a failed publication is available even if live CI cannot be read.

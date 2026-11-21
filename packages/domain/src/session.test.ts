@@ -80,6 +80,7 @@ describe("decide", () => {
       binding: { baseSha: "pr-head", repair: target, patchDigest: "sha256:repair" },
     });
     const failedPublish = decide(checked.state, publishFailed("permanent"), now).state;
+    expect(automaticRepairStatus(failedPublish)).toBe("unavailable");
     const retry = decide(
       failedPublish,
       Events.Retry.make({ expectedRevision: failedPublish.revision }),

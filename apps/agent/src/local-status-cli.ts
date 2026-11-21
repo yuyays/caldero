@@ -55,13 +55,7 @@ const describeAutomaticRepair = (
 ): LocalAutomaticRepair | undefined => {
   const status = automaticRepairStatus(state);
   if (status === null) return undefined;
-  const frozenRepair = state.candidate?.binding.repair;
-  if (
-    state.status === "failed" &&
-    frozenRepair &&
-    frozenRepair.number === state.pullRequest?.number
-  )
-    return { status, nextAction: "retry" };
+  if (state.status === "failed" && state.candidate !== null) return { status, nextAction: "retry" };
   const hasFailedCheck =
     !ci.detailsTruncated && ci.checks.some((check) => check.status === "failing");
   return {
