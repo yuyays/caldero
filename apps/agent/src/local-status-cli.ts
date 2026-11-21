@@ -2,12 +2,8 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs, stripVTControlCharacters } from "node:util";
-import {
-  LocalStatus,
-  type LocalAutomaticRepair,
-  type PullRequestCi,
-} from "@caldero/contracts/local-status";
-import { automaticRepairStatus, canStartRepair, Repo, type SessionState } from "@caldero/domain";
+import { LocalStatus } from "@caldero/contracts/local-status";
+import { automaticRepairGuidance, type AutomaticRepairGuidance, Repo } from "@caldero/domain";
 import { Effect, Schema } from "effect";
 import { noPullRequestCi, readPullRequestCi } from "./local-ci-status.ts";
 import { collectLocalStatus, LocalStatusError } from "./local-status.ts";
@@ -49,22 +45,7 @@ const excerpt = (value: string, limit = 2000) => {
     : `${plain.slice(0, limit)}\n… truncated; --json contains the saved value`;
 };
 
-const describeAutomaticRepair = (
-  state: SessionState,
-  ci: PullRequestCi,
-): LocalAutomaticRepair | undefined => {
-  const status = automaticRepairStatus(state);
-  if (status === null) return undefined;
-  if (state.status === "failed" && state.candidate !== null) return { status, nextAction: "retry" };
-  const hasFailedCheck =
-    !ci.detailsTruncated && ci.checks.some((check) => check.status === "failing");
-  return {
-    status,
-    nextAction: status !== "available" && hasFailedCheck && canStartRepair(state) ? "repair" : null,
-  };
-};
-
-const repairStatusLabels: Record<LocalAutomaticRepair["status"], string> = {
+const repairStatusLabels: Record<AutomaticRepairGuidance["status"], string> = {
   available: "available (watch eligibility and a failed Actions job are required)",
   running: "in progress in saved session",
   used: "used for this PR",
@@ -198,7 +179,10 @@ const command = Effect.gen(function* () {
         return state && pr
           ? readPullRequestCi(repo, pr.number).pipe(
               Effect.map((ci) => {
-                const automaticRepair = describeAutomaticRepair(state, ci);
+                const automaticRepair = automaticRepairGuidance(
+                  state,
+                  !ci.detailsTruncated && ci.checks.some((check) => check.status === "failing"),
+                );
                 return { ...item, ci, ...(automaticRepair ? { automaticRepair } : {}) };
               }),
             )

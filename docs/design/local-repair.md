@@ -71,8 +71,10 @@ Watch settings, issue labels and Actions logs still determine eligibility.
 In progress describes the saved run phase. Used means the PR has spent its
 attempt, including when the head has changed. Unavailable means the PR has an
 unused attempt but the saved phase does not admit one. JSON includes
-`automaticRepair.status` and `automaticRepair.nextAction` when a PR is saved.
-Manual repair guidance depends on the current check results. Reconciliation
+`automaticRepair.status` and `automaticRepair.nextAction` with `--ci` when a
+PR is saved. A manual repair hint depends on current check results and is shown
+when the saved session permits manual repair and automatic repair is unavailable
+or used. Reconciliation
 guidance for a failed publication is available even if live CI cannot be read.
 
 ## Acceptance

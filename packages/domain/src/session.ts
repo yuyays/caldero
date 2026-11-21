@@ -78,10 +78,17 @@ export const SessionState = Schema.Struct({
 });
 export type SessionState = typeof SessionState.Type;
 
+const AutomaticRepairStatus = Schema.Literals(["available", "running", "used", "unavailable"]);
+export const AutomaticRepairGuidance = Schema.Struct({
+  status: AutomaticRepairStatus,
+  nextAction: Schema.NullOr(Schema.Literals(["repair", "retry"])),
+});
+export type AutomaticRepairGuidance = typeof AutomaticRepairGuidance.Type;
+
 /** Describe the saved attempt for the current PR, independently of live CI. */
 export const automaticRepairStatus = (
   state: SessionState,
-): "available" | "running" | "used" | "unavailable" | null => {
+): typeof AutomaticRepairStatus.Type | null => {
   const number = state.pullRequest?.number;
   if (number === undefined) return null;
   const attemptedRun = state.automaticRepairRuns?.[number];
@@ -103,6 +110,20 @@ export const canStartRepair = (state: SessionState, automatic = false): boolean 
     state.status === "published" ||
     (state.status === "failed" && state.repair?.number === number && state.candidate === null)
   );
+};
+
+/** A reported failure can suggest repair. A saved candidate needs publication recovery first. */
+export const automaticRepairGuidance = (
+  state: SessionState,
+  hasFailedCheck: boolean,
+): AutomaticRepairGuidance | null => {
+  const status = automaticRepairStatus(state);
+  if (status === null) return null;
+  if (state.status === "failed" && state.candidate !== null) return { status, nextAction: "retry" };
+  return {
+    status,
+    nextAction: status !== "available" && hasFailedCheck && canStartRepair(state) ? "repair" : null,
+  };
 };
 
 export const SessionEvent = Schema.TaggedUnion({

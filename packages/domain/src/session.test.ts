@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  automaticRepairGuidance,
   automaticRepairStatus,
   decide,
   type Decision,
@@ -142,6 +143,23 @@ describe("decide", () => {
     expect(decide(failedEdit, resume(failedEdit.revision, true), now).result).toBe("stale");
     expect(decide(failedEdit, resume(failedEdit.revision), now).result).toBe("applied");
     expect(decide(failedPublish, resume(failedPublish.revision), now).result).toBe("stale");
+  });
+
+  it("offers publication recovery for a failed follow-up with a saved PR", () => {
+    expect(automaticRepairGuidance(fresh(), true)).toBeNull();
+
+    const failed = run([
+      ...proposed,
+      input("Follow-up while publishing"),
+      Events.PublishSucceeded.make({ number: 42, url: "https://example.test/42" }),
+      answered(2),
+      validated(2, "sha256:follow-up"),
+      publishFailed("permanent"),
+    ]).state;
+    expect(automaticRepairGuidance(failed, false)).toEqual({
+      status: "unavailable",
+      nextAction: "retry",
+    });
   });
 
   it("reconciles a failed frozen publication and refuses retries outside failed state", () => {
