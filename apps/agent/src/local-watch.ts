@@ -48,6 +48,11 @@ export const openLocalWatcher = Effect.fn("openLocalWatcher")(function* (options
     issue: number,
     admit: boolean,
   ) => Effect.Effect<Status, LocalWatchIssueError, Scope.Scope>;
+  readonly repairIssue?: (
+    issue: number,
+    admit: boolean,
+    admissionOpen: Effect.Effect<boolean>,
+  ) => Effect.Effect<void, LocalWatchIssueError, Scope.Scope>;
 }) {
   if (!Number.isFinite(options.pollSeconds) || options.pollSeconds < 1)
     return yield* new LocalWatchError({
@@ -87,6 +92,7 @@ export const openLocalWatcher = Effect.fn("openLocalWatcher")(function* (options
   if (state.repo.owner !== options.repo.owner || state.repo.name !== options.repo.name)
     return yield* new LocalWatchError({ message: "Watch state belongs to a different repository" });
   const stopping = yield* Deferred.make<void>();
+  const admissionOpen = Deferred.isDone(stopping).pipe(Effect.map((stopped) => !stopped));
   const save = Effect.fn("LocalWatcher.save")(function* (next: typeof LocalWatchReceipt.Type) {
     const temporary = `${path}.tmp`;
     const ioError = () =>
@@ -150,6 +156,20 @@ export const openLocalWatcher = Effect.fn("openLocalWatcher")(function* (options
               ? state.settled
               : [...state.settled, issue],
         });
+      }
+      if (options.repairIssue) {
+        for (const issue of state.settled) {
+          if (yield* Deferred.isDone(stopping)) return;
+          yield* Effect.scoped(
+            options.repairIssue(issue, eligible?.has(issue) ?? false, admissionOpen),
+          ).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning(
+                `Issue #${issue}: automatic repair could not proceed: ${error.message}`,
+              ),
+            ),
+          );
+        }
       }
       yield* Deferred.await(stopping).pipe(
         Effect.timeoutOrElse({

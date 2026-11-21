@@ -19,8 +19,8 @@ and Caldero never merges automatically.
 | React inbox for local SQLite sessions                                         | Not connected; the inbox reads the Worker/SessionDO path                                            |
 | Slack, cron and general-purpose tool/result sessions                          | Future work                                                                                         |
 | Global/per-team SchedulerDO, multi-user scheduling and parallel local workers | Future work                                                                                         |
-| Explicit local CI repair                                                      | One checked commit to the same PR for a current failing Actions job                                 |
-| Automatic retries and CI/review follow-ups                                    | Future work                                                                                         |
+| Local CI repair                                                               | One checked commit to the same PR, invoked explicitly or by opt-in watch                            |
+| Automatic session retries and review follow-ups                               | Future work                                                                                         |
 
 The local and Cloudflare paths reuse the same session core. They are execution
 adapters, not separate agent implementations. The diagrams below distinguish
@@ -63,7 +63,7 @@ flowchart LR
   execution environment. Coding tools checkpoint after write, edit and bash.
 - **Publication:** [`github-app.ts`](../apps/agent/src/github-app.ts) keeps App
   credentials on the host and journals Git objects, branch and PR receipts.
-  Initial publication creates a new ref. Explicit repair can append one checked
+  Initial publication creates a new ref. Local repair can append one checked
   commit to a saved open App-authored PR in the same repository using GitHub's
   expected-head condition. Remote calls are idempotent or reconciled across
   SQLite and GitHub. See [local repair](design/local-repair.md).

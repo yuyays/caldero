@@ -110,16 +110,16 @@ describe("Repair CI admission", () => {
             { number: 5, headRef: "caldero/3-v1", headSha: sha, baseRef: "main" },
           );
         yield* rollup("SUCCESS");
-        expect((yield* read().pipe(Effect.flip)).message).toContain("No current failed");
+        expect(yield* read()).toBeUndefined();
         yield* rollup("PENDING", "FAILURE");
         yield* job("b".repeat(40));
-        expect((yield* read().pipe(Effect.flip)).message).toContain("No current failed");
+        expect(yield* read()).toBeUndefined();
         yield* job(sha);
         const context = yield* read();
         expect(context).toContain("expected 2, got 3");
         expect(context).not.toContain("old-prefix");
         expect(context).not.toContain("\\u001b");
-        expect(context.length).toBeLessThan(9000);
+        expect(context?.length).toBeLessThan(9000);
         expect(yield* Effect.promise(() => readFile(join(root, "requests"), "utf8"))).toBe(
           "read\n",
         );

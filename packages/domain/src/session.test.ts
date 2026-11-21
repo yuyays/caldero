@@ -90,6 +90,49 @@ describe("decide", () => {
     });
   });
 
+  it("blocks another automatic repair on the same PR at a new head", () => {
+    const pr = { number: 42, url: "https://example.test/42" };
+    const published = run([...proposed, Events.PublishSucceeded.make(pr)]).state;
+    const target = { number: 42, headRef: "caldero/7-v1", headSha: "pr-head", baseRef: "main" };
+    const first = decide(
+      published,
+      Events.Repair.make({
+        expectedRevision: published.revision,
+        target,
+        context: "A test failed",
+        automatic: true,
+      }),
+      now,
+    );
+    expect(first.result).toBe("applied");
+    const repaired = run(
+      [answered(2), validated(2, "sha256:repair"), Events.PublishSucceeded.make(pr)],
+      first.state,
+    ).state;
+    const request = {
+      expectedRevision: repaired.revision,
+      target: { ...target, headSha: "new-pr-head" },
+      context: "CI is still failing",
+    };
+    expect(
+      decide(repaired, Events.Repair.make({ ...request, automatic: true }), now),
+    ).toMatchObject({ result: "stale", instructions: [] });
+    expect(decide(repaired, Events.Repair.make(request), now).result).toBe("applied");
+    const failedEdit = run(
+      [Events.RunFailed.make({ runId: 2, reason: "model stopped" })],
+      first.state,
+    ).state;
+    const failedPublish = run(
+      [answered(2), validated(2, "sha256:repair"), publishFailed("permanent")],
+      first.state,
+    ).state;
+    const resume = (revision: number, automatic = false) =>
+      Events.Repair.make({ ...request, expectedRevision: revision, automatic });
+    expect(decide(failedEdit, resume(failedEdit.revision, true), now).result).toBe("stale");
+    expect(decide(failedEdit, resume(failedEdit.revision), now).result).toBe("applied");
+    expect(decide(failedPublish, resume(failedPublish.revision), now).result).toBe("stale");
+  });
+
   it("reconciles a failed frozen publication and refuses retries outside failed state", () => {
     const failed = run([...proposed, publishFailed("permanent")]).state;
     const retried = decide(failed, Events.Retry.make({ expectedRevision: failed.revision }), now);

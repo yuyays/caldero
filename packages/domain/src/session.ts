@@ -70,17 +70,36 @@ export const SessionState = Schema.Struct({
   pullRequest: Schema.NullOr(Schema.Struct({ number: Schema.Int, url: Schema.String })),
   failure: Schema.NullOr(Schema.String),
   repair: Schema.optionalKey(RepairTarget),
+  /** The run that spent each PR's automatic repair attempt. */
+  automaticRepairRuns: Schema.optionalKey(Schema.Record(Schema.String, Schema.Int)),
   /** Who stopped the session, or its historical reviewer, for the audit trail. */
   decidedBy: Schema.NullOr(Schema.String),
   updatedAt: Schema.Finite,
 });
 export type SessionState = typeof SessionState.Type;
 
+/** Failed edits can be retried explicitly. Frozen patches must reconcile publication first. */
+export const canStartRepair = (state: SessionState, automatic = false): boolean => {
+  const number = state.pullRequest?.number;
+  if (number === undefined) return false;
+  if (automatic)
+    return state.status === "published" && state.automaticRepairRuns?.[number] === undefined;
+  return (
+    state.status === "published" ||
+    (state.status === "failed" && state.repair?.number === number && state.candidate === null)
+  );
+};
+
 export const SessionEvent = Schema.TaggedUnion({
   IssueLabeled: { context: Schema.String, baseSha: Schema.String, baseRef: Schema.String },
   UserInput: { text: Schema.String },
   Retry: { expectedRevision: Schema.Int },
-  Repair: { expectedRevision: Schema.Int, target: RepairTarget, context: Schema.String },
+  Repair: {
+    expectedRevision: Schema.Int,
+    target: RepairTarget,
+    context: Schema.String,
+    automatic: Schema.optionalKey(Schema.Boolean),
+  },
   RunAnswered: { runId: Schema.Int },
   Validated: { runId: Schema.Int, patchDigest: Schema.String, evidence: Schema.String },
   ValidationFailed: { runId: Schema.Int, evidence: Schema.String },
@@ -234,9 +253,9 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
         ),
       ]);
     },
-    Repair: ({ expectedRevision, target, context }) => {
+    Repair: ({ expectedRevision, target, context, automatic }) => {
       if (
-        state.status !== "published" ||
+        !canStartRepair(state, automatic) ||
         state.revision !== expectedRevision ||
         state.pullRequest?.number !== target.number
       )
@@ -247,6 +266,9 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
           status: "running",
           runId,
           repair: target,
+          ...(automatic
+            ? { automaticRepairRuns: { ...state.automaticRepairRuns, [target.number]: runId } }
+            : {}),
           baseSha: target.headSha,
           baseRef: target.baseRef,
           attempts: 0,
