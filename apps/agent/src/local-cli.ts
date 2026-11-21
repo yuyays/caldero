@@ -41,7 +41,7 @@ pnpm --filter @caldero/agent local --watch --check 'COMMAND' [--check 'COMMAND']
 --repair               Repair one failed CI job on the saved open PR (pnpm repair)
 --watch                Poll labeled issues, one at a time; resume admitted work on restart
 --auto-repair          With --watch, attempt one repair per saved PR on failed Actions CI
---pr-check LABEL=CMD   Run a check and share its label and command in the PR body (repeatable)
+--pr-check LABEL=CMD   Run a single-issue check and publish its label and command, excluding output
 --label NAME           Watch label (default agent)
 --poll-seconds N       Delay between watch scans (default 60)
 --state-root PATH      Watch state root (default ~/.local/state/caldero/OWNER/REPO)
@@ -127,6 +127,10 @@ const command = Effect.gen(function* () {
       message: "Use a nonempty --label and --poll-seconds of at least 1",
     });
   const publicChecks: PublicCheck[] = [];
+  if (values["pr-check"] && (values.watch || values.repair || values["check-connection"]))
+    return yield* new LocalRunnerError({
+      message: "--pr-check requires a single-issue run that can open a new PR",
+    });
   for (const check of values["pr-check"] ?? []) {
     const separator = check.indexOf("=");
     const checkLabel = check.slice(0, separator).trim();

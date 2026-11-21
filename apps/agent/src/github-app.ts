@@ -124,8 +124,7 @@ const segment = encodeURIComponent;
 
 /** Only operator-designated commands cross into Markdown. Tool output stays in the session. */
 const verificationSection = (publicChecks: ReadonlyArray<PublicCheck>) => {
-  if (publicChecks.length === 0)
-    return "## Verification\n\nVerify the issue’s acceptance criteria during review.";
+  if (publicChecks.length === 0) return "";
   const checks = publicChecks
     .map(({ label, command }) =>
       `${label}\n$ ${command}`
@@ -134,7 +133,7 @@ const verificationSection = (publicChecks: ReadonlyArray<PublicCheck>) => {
         .join("\n"),
     )
     .join("\n\n");
-  return `## Verification\n\nPassed on the frozen patch:\n\n${checks}\n\nVerify the remaining acceptance criteria during review.`;
+  return `\n\n## Verification\n\nCaldero ran these operator-specified checks locally in the original candidate workspace. Each exited successfully.\n\n${checks}\n\nVerify the remaining acceptance criteria and any later changes during review.`;
 };
 
 const bindingKey = (binding: ApprovalBinding) =>
@@ -640,7 +639,7 @@ const make = Effect.fn("GitHubApp.make")(function* (options: GitHubAppOptions) {
           author: { ...options.author, date },
           message: `caldero: issue #${issue} version ${binding.version}\n\nPatch: ${binding.patchDigest}`,
           title: `Resolve #${issue} (agent v${binding.version})`,
-          body: `Closes #${issue}\n\nValidated patch: ${binding.patchDigest}\nBase: ${binding.baseRef} at ${binding.baseSha}\n\n${verificationSection(publicChecks)}`,
+          body: `Closes #${issue}\n\nValidated patch: ${binding.patchDigest}\nBase: ${binding.baseRef} at ${binding.baseSha}${verificationSection(publicChecks)}`,
           baseTree: null,
           blobs: null,
           treeSha: null,

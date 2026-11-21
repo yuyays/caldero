@@ -519,9 +519,13 @@ describe("GitHubApp", () => {
               ? result.pullRequest
               : yield* next.publish(7, binding, patch, journal);
           expect(pr.number).toBe(101);
-          expect(http.posts.filter((post) => post.path === "/repos/acme/app/pulls")).toHaveLength(
-            1,
-          );
+          expect(http.posts.filter((post) => post.path === "/repos/acme/app/pulls")).toMatchObject([
+            {
+              body: {
+                body: `Closes #7\n\nValidated patch: ${binding.patchDigest}\nBase: main at base-1`,
+              },
+            },
+          ]);
           const commits = http.posts.filter((post) => post.path.endsWith("/git/commits"));
           expect(
             commits.every((post) => JSON.stringify(post.body) === JSON.stringify(commits[0]?.body)),

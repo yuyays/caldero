@@ -53,6 +53,7 @@ export type PublicCheck = typeof PublicCheck.Type;
 export const Candidate = Schema.Struct({
   binding: ApprovalBinding,
   evidence: Schema.String,
+  /** Public check descriptions from this candidate's successful local validation. */
   publicChecks: Schema.optionalKey(Schema.Array(PublicCheck)),
 });
 

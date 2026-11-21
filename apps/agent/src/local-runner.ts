@@ -244,6 +244,10 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
     return yield* new LocalRunnerError({
       message: `Only failed sessions can be retried. Resume active work with pnpm --filter @caldero/agent local --issue ${options.issue}, using the same --state-dir and --check options.`,
     });
+  if (options.retry && saved?.candidate && options.publicChecks?.length)
+    return yield* new LocalRunnerError({
+      message: "Retry will reuse the frozen candidate and its verification. Omit --pr-check.",
+    });
   if (options.retry && saved?.repair && !saved.candidate)
     return yield* new LocalRunnerError({
       message:

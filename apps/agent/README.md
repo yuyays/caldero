@@ -164,11 +164,16 @@ pnpm --filter @caldero/agent local --issue 123 \
   --pr-check 'Demo reload accepts existing requests=pnpm --filter @pcc/web test src/lib/demo.test.ts'
 ```
 
-Each `--pr-check` must pass alongside the ordinary checks on the frozen patch.
-Choose public-safe labels and commands. Standard `--check` commands and all
-command output stay in local validation evidence. The PR asks reviewers to
-verify the remaining issue criteria. With `--watch`, the options apply to
-each admitted issue. Repairs append a fix commit to the existing PR.
+Use one or more `--pr-check` options for a single issue. The first `=` separates
+the label and command. All configured checks must pass. They share the
+workspace created for the frozen candidate, in ordinary-check then public-check
+order. Choose public-safe labels and commands. Standard `--check` commands and
+all command output stay in local validation evidence. The PR asks reviewers to
+verify the remaining criteria and any later commits.
+
+`pnpm retry` can take `--pr-check` when it starts a fresh edit after a failed
+check or run. Publication-only retries reuse the saved verification.
+`--watch` and `--repair` accept ordinary `--check` options.
 For the demo, the remaining manual check is to load demo data twice and
 confirm the original requests and their audit events are still present.
 

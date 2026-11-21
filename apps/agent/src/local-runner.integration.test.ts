@@ -272,6 +272,11 @@ describe("Local durable runner", () => {
         [["--retry", "--state-root", root], "require --watch"],
         [["--auto-repair", "--issue", "7"], "--auto-repair requires --watch"],
         [["--issue", "7", "--pr-check", "Label only"], "Use --pr-check LABEL=COMMAND"],
+        [["--watch", "--pr-check", "Label=true"], "--pr-check requires a single-issue run"],
+        [
+          ["--issue", "7", "--repair", "--pr-check", "Label=true"],
+          "--pr-check requires a single-issue run",
+        ],
       ] as const) {
         const result = yield* Effect.tryPromise({
           try: () =>
