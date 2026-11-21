@@ -47,6 +47,8 @@ one entry per issue; no retention/compaction policy is introduced in this versio
 ## CLI and shutdown
 
 `--watch` is exclusive with `--issue`, `--state-dir` and `--check-connection`.
+`--auto-repair` requires `--watch` and enables one automatic repair attempt per
+saved PR. Use it again with the same state root to resume an interrupted repair.
 `--poll-seconds` defaults to 60 and must be at least 1. `--state-root` selects the
 watch repository directory (default `~/.local/state/caldero/OWNER/REPO`), with issue
 directories underneath. The single-issue `--state-dir` retains its existing meaning.
