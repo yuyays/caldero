@@ -42,19 +42,24 @@ export type Status = typeof Status.Type;
 export const Policy = Schema.Literals(["off", "observe", "auto"]);
 export type Policy = typeof Policy.Type;
 
+const publicCheckText = Schema.String.check(
+  Schema.isPattern(/\S/u),
+  Schema.isPattern(/^(?![\s\S]*[\p{Cc}\p{Cf}\p{Zl}\p{Zp}])/u),
+);
 /** An operator-designated check whose label and command may appear on the PR. */
 export const PublicCheck = Schema.Struct({
-  label: Schema.String,
-  command: Schema.String,
+  label: publicCheckText.check(Schema.isMaxLength(120)),
+  command: publicCheckText.check(Schema.isMaxLength(1000)),
 });
 export type PublicCheck = typeof PublicCheck.Type;
+export const PublicChecks = Schema.Array(PublicCheck).check(Schema.isMaxLength(8));
 
 /** A validated, frozen patch bound to publication. */
 export const Candidate = Schema.Struct({
   binding: ApprovalBinding,
   evidence: Schema.String,
   /** Public check descriptions from this candidate's successful local validation. */
-  publicChecks: Schema.optionalKey(Schema.Array(PublicCheck)),
+  publicChecks: Schema.optionalKey(PublicChecks),
 });
 
 export const SessionState = Schema.Struct({
@@ -150,7 +155,7 @@ export const SessionEvent = Schema.TaggedUnion({
     runId: Schema.Int,
     patchDigest: Schema.String,
     evidence: Schema.String,
-    publicChecks: Schema.optionalKey(Schema.Array(PublicCheck)),
+    publicChecks: Schema.optionalKey(PublicChecks),
   },
   ValidationFailed: { runId: Schema.Int, evidence: Schema.String },
   RunFailed: { runId: Schema.Int, reason: Schema.String },
@@ -175,7 +180,11 @@ export const Instruction = Schema.TaggedUnion({
   },
   Validate: { instructionId: Schema.String, runId: Schema.Int },
   AbortRun: { instructionId: Schema.String, runId: Schema.Int },
-  Publish: { instructionId: Schema.String, binding: ApprovalBinding },
+  Publish: {
+    instructionId: Schema.String,
+    binding: ApprovalBinding,
+    publicChecks: Schema.optionalKey(PublicChecks),
+  },
   Reconcile: { instructionId: Schema.String, binding: ApprovalBinding },
   Project: { instructionId: Schema.String, revision: Schema.Int, snapshot: Schema.String },
   Comment: { instructionId: Schema.String, key: Schema.String, text: Schema.String },
@@ -375,7 +384,14 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
           attempts: 0,
           candidate: { binding, evidence, ...(publicChecks === undefined ? {} : { publicChecks }) },
         },
-        [(instructionId) => Instruction.cases.Publish.make({ instructionId, binding })],
+        [
+          (instructionId) =>
+            Instruction.cases.Publish.make({
+              instructionId,
+              binding,
+              ...(publicChecks === undefined ? {} : { publicChecks }),
+            }),
+        ],
       );
     },
     ValidationFailed: ({ runId, evidence }) => {
@@ -425,14 +441,23 @@ export const decide = (state: SessionState, event: SessionEvent, now: number): D
       ]);
     },
     PublishFailed: ({ kind, message }) => {
-      const binding = state.candidate?.binding;
-      if (state.status !== "publishing" || binding === undefined) return unchanged("stale");
+      const candidate = state.candidate;
+      if (state.status !== "publishing" || candidate === null) return unchanged("stale");
+      const { binding, publicChecks } = candidate;
       const attempts = state.attempts + 1;
       if (kind === "permanent" || attempts >= attemptLimit)
         return settle({ status: "failed", attempts, failure: `Publish failed: ${message}` });
       // An unknown outcome is reconciled, never republished: the first attempt may have landed.
-      const next = kind === "ambiguous" ? Instruction.cases.Reconcile : Instruction.cases.Publish;
-      return applied({ attempts }, [(instructionId) => next.make({ instructionId, binding })]);
+      return applied({ attempts }, [
+        (instructionId) =>
+          kind === "ambiguous"
+            ? Instruction.cases.Reconcile.make({ instructionId, binding })
+            : Instruction.cases.Publish.make({
+                instructionId,
+                binding,
+                ...(publicChecks === undefined ? {} : { publicChecks }),
+              }),
+      ]);
     },
   });
 };

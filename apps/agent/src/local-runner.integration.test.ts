@@ -272,6 +272,8 @@ describe("Local durable runner", () => {
         [["--retry", "--state-root", root], "require --watch"],
         [["--auto-repair", "--issue", "7"], "--auto-repair requires --watch"],
         [["--issue", "7", "--pr-check", "Label only"], "Use --pr-check LABEL=COMMAND"],
+        [["--issue", "7", "--pr-check", "Label=true\n"], "Use --pr-check LABEL=COMMAND"],
+        [["--issue", "7", "--pr-check", "Label=   "], "Use --pr-check LABEL=COMMAND"],
         [["--watch", "--pr-check", "Label=true"], "--pr-check requires a single-issue run"],
         [
           ["--issue", "7", "--repair", "--pr-check", "Label=true"],
@@ -495,15 +497,20 @@ describe("Local durable runner", () => {
           return original(context, options, ...rest);
         };
         const publishedChecks: unknown[] = [];
+        const publicCheck = {
+          label: "The generated notes are nonempty",
+          command: "test ! -d .git && test -s notes.txt",
+        };
         const open = () =>
           openLocalIssue({
             repo,
             issue: 7,
             stateDir,
-            checks: ['test -f notes.txt && test -z "${CALDERO_TEST_HOST_ONLY+x}"'],
-            publicChecks: [
-              { label: "The generated notes are nonempty", command: "test -s notes.txt" },
+            checks: [
+              'test -f notes.txt && test -z "${CALDERO_TEST_HOST_ONLY+x}"',
+              "printf 'private-%s' output",
             ],
+            publicChecks: [publicCheck],
             pi: { ...scripted, thinkingLevel: "medium" },
           }).pipe(
             Effect.provideService(
@@ -538,10 +545,8 @@ describe("Local durable runner", () => {
         expect(recovered.state.pullRequest).toEqual(first.state.pullRequest);
         expect(recovered.patch).toEqual(first.patch);
         expect(recovered.patchUnavailable).not.toBe(true);
-        expect(recovered.state.candidate?.evidence).toContain("test -s notes.txt");
-        expect(publishedChecks).toEqual([
-          [{ label: "The generated notes are nonempty", command: "test -s notes.txt" }],
-        ]);
+        expect(recovered.state.candidate?.evidence).toContain("private-output");
+        expect(publishedChecks).toEqual([[publicCheck]]);
         expect(github.state.pullRequests).toHaveLength(1);
       }),
   );

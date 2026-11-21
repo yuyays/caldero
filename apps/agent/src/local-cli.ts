@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { Events, type PublicCheck, Repo } from "@caldero/domain";
+import { Events, PublicChecks, Repo } from "@caldero/domain";
 import { Effect, Schema } from "effect";
 import { GitHubApp } from "./github-app.ts";
 import { openLocalPi } from "./local-pi.ts";
@@ -26,6 +26,31 @@ const decodeGitHub = Schema.decodeUnknownEffect(
     }),
   ),
 );
+const decodePublicChecks = Schema.decodeUnknownEffect(PublicChecks);
+
+const parsePublicChecks = (values: ReadonlyArray<string>) =>
+  decodePublicChecks(
+    values.map((value) => {
+      const separator = value.indexOf("=");
+      return separator < 0
+        ? { label: "", command: "" }
+        : { label: value.slice(0, separator), command: value.slice(separator + 1) };
+    }),
+  ).pipe(
+    Effect.map((checks) =>
+      checks.map(({ label, command }) => ({
+        label: label.trim(),
+        command: command.trim(),
+      })),
+    ),
+    Effect.mapError(
+      () =>
+        new LocalRunnerError({
+          message:
+            "Use --pr-check LABEL=COMMAND for up to eight checks with single-line public labels and commands",
+        }),
+    ),
+  );
 
 const help = `Caldero with this machine's Pi login and saved model settings.
 
@@ -126,30 +151,11 @@ const command = Effect.gen(function* () {
     return yield* new LocalRunnerError({
       message: "Use a nonempty --label and --poll-seconds of at least 1",
     });
-  const publicChecks: PublicCheck[] = [];
   if (values["pr-check"] && (values.watch || values.repair || values["check-connection"]))
     return yield* new LocalRunnerError({
       message: "--pr-check requires a single-issue run that can open a new PR",
     });
-  for (const check of values["pr-check"] ?? []) {
-    const separator = check.indexOf("=");
-    const checkLabel = check.slice(0, separator).trim();
-    const shellCommand = check.slice(separator + 1).trim();
-    if (
-      separator < 1 ||
-      !checkLabel ||
-      !shellCommand ||
-      checkLabel.length > 120 ||
-      shellCommand.length > 1000 ||
-      /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(check)
-    )
-      return yield* new LocalRunnerError({
-        message: "Use --pr-check LABEL=COMMAND with a single-line public label and command",
-      });
-    publicChecks.push({ label: checkLabel, command: shellCommand });
-  }
-  if (publicChecks.length > 8)
-    return yield* new LocalRunnerError({ message: "Use at most eight --pr-check options" });
+  const publicChecks = yield* parsePublicChecks(values["pr-check"] ?? []);
   const checks = values.check ?? [];
   const commands = [...checks, ...publicChecks.map((check) => check.command)];
   if (!values["check-connection"])

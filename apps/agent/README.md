@@ -164,8 +164,9 @@ pnpm --filter @caldero/agent local --issue 123 \
   --pr-check 'Demo reload accepts existing requests=pnpm --filter @pcc/web test src/lib/demo.test.ts'
 ```
 
-Use one or more `--pr-check` options for a single issue. The first `=` separates
-the label and command. All configured checks must pass. They share the
+Use up to eight `--pr-check` options for a single issue. The first `=` separates
+the single-line label (up to 120 characters) and command (up to 1,000 characters).
+All configured checks must pass. They share the
 workspace created for the frozen candidate, in ordinary-check then public-check
 order. Choose public-safe labels and commands. Standard `--check` commands and
 all command output stay in local validation evidence. The PR asks reviewers to
