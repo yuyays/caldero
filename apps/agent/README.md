@@ -205,7 +205,7 @@ The normal attempt limit still applies. Repeating `pnpm local` only resumes
 nonterminal work; it does not request another retry. After an interrupted retry has committed,
 resume with the original `local --issue N` command and the same state directory.
 If retry had not committed, the session remains failed and needs the retry command again.
-The watcher still leaves settled terminal sessions alone. Use `pnpm status
+The watcher leaves settled sessions alone by default. Use `pnpm status
 --issue 11` to inspect the result. See [retry design](../../docs/design/local-retry.md).
 
 ### Repair a failing PR locally
@@ -220,6 +220,19 @@ through your login. Caldero runs the supplied local checks and appends one commi
 to the same PR only while the pinned head is current. Resume an interrupted repair
 with the original local runner and the same checks and state directory.
 See [local repair](../../docs/design/local-repair.md).
+
+To let the watcher repair a failing PR automatically, run:
+
+```sh
+pnpm --filter @caldero/agent local --watch --auto-repair --check 'pnpm test'
+```
+
+Keep the issue open and labeled with the watch label. The watcher considers
+saved PRs from its own issue history and uses your signed-in `gh` to inspect
+Actions. It gets one automatic attempt per PR, including across restarts and
+head changes. Use the same state root and flag to resume an interrupted repair.
+If CI stays red, inspect it with `pnpm status --issue N --ci` and decide what to
+do next.
 
 ### Watch labeled issues locally
 

@@ -104,7 +104,9 @@ Documented limitations, not vulnerabilities:
 
 - The deployed Cloudflare path is unverified; local development is the exercised path.
 - No global run-slot limiter or scheduler, so concurrency is unbounded across issues.
-- No automatic CI or review repair, and no auto-merge.
+- Automatic CI repair requires the local watcher's `--auto-repair` flag and
+  is limited to one attempt per saved PR. Review comments and merging remain
+  human operations.
 - Withholding secrets from a workspace does not prevent network exfiltration when
   that workspace has network access. The cloud path closes this by disabling
   internet; the local path does not.

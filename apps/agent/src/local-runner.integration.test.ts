@@ -14,7 +14,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/provid
 import { makeFakeGitHub } from "./fake-github.ts";
 import { openLocalIssue } from "./local-runner.ts";
 import { scriptedModels } from "./testing.ts";
-import { localWatchIssueError } from "./local-watch.ts";
+import { localWatchIssueError, openLocalWatcher } from "./local-watch.ts";
 import { GitHub } from "./ports.ts";
 
 const repo = { owner: "acme", name: "app" };
@@ -115,7 +115,7 @@ describe("Local durable runner", () => {
           const host = yield* openLocalIssue({
             ...options,
             pi: fixed,
-            repair,
+            repair: { load: repair },
             checks: [
               "test -f pr-head.txt && test ! -e old-only.txt && grep -q 'Fix the red job' notes.txt",
             ],
@@ -133,6 +133,128 @@ describe("Local durable runner", () => {
     }),
   );
 
+  it.effect("watch resumes an admitted automatic repair and never repairs the same PR twice", () =>
+    Effect.gen(function* () {
+      const stateRoot = yield* directory;
+      const fake = makeFakeGitHub({ source: [] });
+      const github = yield* GitHub.pipe(Effect.provide(fake.layer));
+      const options = {
+        stateDir: join(stateRoot, "7"),
+        repo,
+        issue: 7,
+        checks: ["test -f notes.txt"],
+      };
+      let probes = 0;
+      const commits: number[] = [];
+      const remote = GitHub.of({
+        ...github,
+        publish: (issue, binding, patch, journal) => {
+          const target = binding.repair;
+          return target
+            ? Effect.sync(() => {
+                commits.push(target.number);
+                return { number: 100, url: "https://github.test/pull/100" };
+              })
+            : github.publish(issue, binding, patch, journal);
+        },
+      });
+      // The model blocks until scope teardown, simulating an exit after durable admission.
+      const paused = scriptedModels();
+      const started = Promise.withResolvers<void>();
+      paused.control.script = (_transcript, streamOptions) => {
+        started.resolve();
+        return new Promise((resolve) => {
+          const finish = () => resolve(fauxAssistantMessage("Interrupted."));
+          if (streamOptions?.signal?.aborted) finish();
+          else streamOptions?.signal?.addEventListener("abort", finish, { once: true });
+        });
+      };
+      const watchPhase = (
+        phase: "initial" | "unlabeled" | "green" | "interrupt" | "resume" | "spent",
+      ) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            let stop = Effect.void;
+            const watcher = yield* openLocalWatcher({
+              repo,
+              stateRoot,
+              pollSeconds: 60,
+              discover: Effect.succeed(phase === "unlabeled" || phase === "resume" ? [] : [7]),
+              runIssue: Effect.fn("fixture.run")(function* (issue: number, admit: boolean) {
+                const host = yield* openLocalIssue({
+                  ...options,
+                  issue,
+                  admit,
+                  pi: scriptedModels(),
+                }).pipe(
+                  Effect.provideService(GitHub, remote),
+                  Effect.mapError(localWatchIssueError),
+                );
+                yield* host.drain().pipe(Effect.mapError(localWatchIssueError));
+                yield* stop;
+                return (yield* host.view().pipe(Effect.mapError(localWatchIssueError))).state
+                  .status;
+              }),
+              ...(phase === "initial"
+                ? {}
+                : {
+                    repairIssue: Effect.fn("fixture.autoRepair")(
+                      function* (issue: number, admit: boolean) {
+                        yield* openLocalIssue({
+                          ...options,
+                          issue,
+                          admit,
+                          pi: phase === "interrupt" ? paused : scriptedModels(),
+                          repair: {
+                            automatic: true,
+                            load: (number) =>
+                              Effect.sync(() => {
+                                probes++;
+                                if (phase === "green") return undefined;
+                                return {
+                                  target: {
+                                    number,
+                                    headRef: "caldero/7-v1",
+                                    headSha: "red-head",
+                                    baseRef: "main",
+                                  },
+                                  context: "Fix the red job",
+                                };
+                              }),
+                          },
+                        }).pipe(
+                          Effect.provideService(GitHub, remote),
+                          Effect.flatMap((host) =>
+                            phase === "interrupt"
+                              ? Effect.promise(() => started.promise)
+                              : host.drain(),
+                          ),
+                          Effect.mapError(localWatchIssueError),
+                        );
+                      },
+                      (repair) => repair.pipe(Effect.ensuring(Effect.suspend(() => stop))),
+                    ),
+                  }),
+            });
+            stop = watcher.stop;
+            yield* watcher.run;
+          }),
+        );
+      yield* watchPhase("initial");
+      yield* watchPhase("unlabeled");
+      expect(probes).toBe(0);
+      yield* watchPhase("green");
+      expect(probes).toBe(1);
+      yield* watchPhase("interrupt");
+      expect(commits).toEqual([]);
+      yield* watchPhase("resume");
+      yield* watchPhase("spent");
+      expect(probes).toBe(2);
+      expect(commits).toEqual([100]);
+      expect(fake.state.pullRequests).toHaveLength(1);
+    }),
+  );
+
   it.effect("rejects incompatible retry arguments before loading Pi or GitHub credentials", () =>
     Effect.gen(function* () {
       const root = yield* directory;
@@ -140,6 +262,7 @@ describe("Local durable runner", () => {
         [["--retry", "--watch"], "--watch cannot"],
         [["--retry", "--check-connection"], "--retry cannot"],
         [["--retry", "--state-root", root], "require --watch"],
+        [["--auto-repair", "--issue", "7"], "--auto-repair requires --watch"],
       ] as const) {
         const result = yield* Effect.tryPromise({
           try: () =>

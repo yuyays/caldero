@@ -15,7 +15,7 @@ import { openSessionHost, type SessionHostOptions } from "./session-host.ts";
 
 export class LocalRunnerError extends Schema.TaggedError<LocalRunnerError>()("LocalRunnerError", {
   message: Schema.String,
-  reason: Schema.optionalKey(Schema.Literals(["locked", "configuration"])),
+  reason: Schema.optionalKey(Schema.Literals(["locked", "configuration", "ineligible"])),
 }) {}
 
 export const validateLocalChecks = Effect.fn("validateLocalChecks")(
@@ -196,6 +196,13 @@ const prepareSavedIssue = Effect.fn("prepareSavedIssue")(function* (options: {
 });
 
 /** The caller's scope owns this host, SQLite and lock; reopening resumes nonterminal work in the same issue. */
+type LoadRepair = (
+  number: number,
+) => Effect.Effect<
+  { readonly target: RepairTarget; readonly context: string } | undefined,
+  GitHubError
+>;
+
 export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   readonly repo: Repo;
   readonly issue: number;
@@ -206,9 +213,7 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   readonly admit?: boolean;
   /** Explicitly retry only an existing failed session; never admit new work. */
   readonly retry?: boolean;
-  readonly repair?: (
-    number: number,
-  ) => Effect.Effect<{ readonly target: RepairTarget; readonly context: string }, GitHubError>;
+  readonly repair?: { readonly automatic?: boolean; readonly load: LoadRepair };
 }) {
   yield* validateLocalIssue(options.issue, options.checks);
   yield* refuseLegacyIssue(options.repo, options.issue);
@@ -232,14 +237,34 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
       message:
         "The repair stopped before a checked patch was saved. Use the PR to continue manually.",
     });
-  if (options.repair && (saved?.status !== "published" || !saved.pullRequest))
-    return yield* new LocalRunnerError({
-      message: "Repair requires a published Caldero session with a saved pull request",
-    });
-  const repair =
-    options.repair && saved?.pullRequest
-      ? yield* options.repair(saved.pullRequest.number)
-      : undefined;
+  let repair;
+  if (options.repair) {
+    const number = saved?.pullRequest?.number;
+    const attemptedRun = number === undefined ? undefined : saved?.automaticRepairRuns?.[number];
+    const resume =
+      options.repair.automatic &&
+      saved != null &&
+      attemptedRun === saved.runId &&
+      ["running", "validating", "publishing"].includes(saved.status);
+    if (!resume) {
+      if (
+        saved?.status !== "published" ||
+        number === undefined ||
+        (options.repair.automatic && (options.admit === false || attemptedRun !== undefined))
+      )
+        return yield* new LocalRunnerError({
+          message:
+            "Repair requires an eligible published Caldero session with a saved pull request",
+          ...(options.repair.automatic ? { reason: "ineligible" as const } : {}),
+        });
+      repair = yield* options.repair.load(number);
+      if (repair === undefined)
+        return yield* new LocalRunnerError({
+          message: "No current failed GitHub Actions job with a readable log was found",
+          ...(options.repair.automatic ? { reason: "ineligible" as const } : {}),
+        });
+    }
+  }
   yield* createDirectories;
   const database = join(options.stateDir, "session.sqlite");
   if (!options.retry && !options.repair) {
@@ -287,7 +312,11 @@ export const openLocalIssue = Effect.fn("openLocalIssue")(function* (options: {
   }).pipe(Effect.provide(serviceContext));
   if (repair && saved) {
     const result = yield* host.deliver(
-      Events.Repair.make({ ...repair, expectedRevision: saved.revision }),
+      Events.Repair.make({
+        ...repair,
+        expectedRevision: saved.revision,
+        ...(options.repair?.automatic ? { automatic: true } : {}),
+      }),
       `local-repair:${saved.revision}`,
     );
     if (result === "stale")

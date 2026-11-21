@@ -40,6 +40,21 @@ and the same checks. A failed publication with a frozen candidate can use
 Known Puchero/Metate databases in old default paths or in the selected state
 directory are refused. Legacy sessions and branches are outside this slice.
 
+## Automatic repair in local watch
+
+`local --watch --auto-repair` enables the same repair workflow for PRs from
+the watcher's settled issues. A new attempt requires an open issue with the
+watch label in the current scan. The published session, PR ownership, head
+and failing Actions job are checked before admission.
+
+The issue database records the automatic attempt for that PR in the same
+transaction that starts repair. A new head, a failed local check, or a
+restart cannot reset the attempt. Green CI, missing logs and unsuccessful
+admission leave it available. A watcher restarted with the flag resumes an
+already admitted automatic repair from the same state root, even if the issue
+has since been closed or unlabeled. The ordinary single-issue resume command
+also works. Manual repair keeps its existing preconditions and budget.
+
 ## Acceptance
 
 - A red job on the saved PR head supplies context, while a passing snapshot
@@ -49,3 +64,7 @@ directory are refused. Legacy sessions and branches are outside this slice.
   reconciled without another commit.
 - The first repair validates from the PR head rather than the issue's old
   base, and old workspace files do not enter the checked repair patch.
+- Watch with the flag admits one automatic repair for a labeled, open issue
+  with an eligible failing job. Without the flag it performs no CI repair
+  lookups. A restart resumes interrupted work and the same PR cannot spend
+  another automatic attempt.

@@ -40,6 +40,7 @@ pnpm --filter @caldero/agent local --watch --check 'COMMAND' [--check 'COMMAND']
 --retry                Explicitly retry an existing failed session (pnpm retry)
 --repair               Repair one failed CI job on the saved open PR (pnpm repair)
 --watch                Poll labeled issues, one at a time; resume admitted work on restart
+--auto-repair          With --watch, attempt one repair per saved PR on failed Actions CI
 --label NAME           Watch label (default agent)
 --poll-seconds N       Delay between watch scans (default 60)
 --state-root PATH      Watch state root (default ~/.local/state/caldero/OWNER/REPO)
@@ -68,6 +69,7 @@ const command = Effect.gen(function* () {
         options: {
           issue: { type: "string" },
           watch: { type: "boolean" },
+          "auto-repair": { type: "boolean" },
           retry: { type: "boolean" },
           repair: { type: "boolean" },
           label: { type: "string" },
@@ -86,6 +88,8 @@ const command = Effect.gen(function* () {
   if (values.help) return yield* Effect.sync(() => console.log(help));
   const issue = Number(values.issue);
   const label = values.label ?? "agent";
+  if (values["auto-repair"] && !values.watch)
+    return yield* new LocalRunnerError({ message: "--auto-repair requires --watch" });
   if (
     values.watch &&
     (values.issue !== undefined ||
@@ -155,6 +159,16 @@ const command = Effect.gen(function* () {
     privateKey,
     author: { name: "caldero", email: "caldero@users.noreply.github.com" },
   });
+  const localIssue = {
+    repo: config.repo,
+    checks: values.check ?? [],
+    pi,
+  };
+  const loadRepair = Effect.fn("LocalCLI.loadRepair")(function* (number: number) {
+    const target = yield* github.readRepairTarget(number);
+    const context = yield* readLocalRepairContext(config.repo, target);
+    return context === undefined ? undefined : { target, context };
+  });
   if (values.watch) {
     const stateRoot = resolve(
       values["state-root"] ??
@@ -167,11 +181,9 @@ const command = Effect.gen(function* () {
       discover: github.listOpenLabeledIssues(label),
       runIssue: Effect.fn("LocalWatch.runIssue")(function* (number: number, admit: boolean) {
         const host = yield* openLocalIssue({
-          repo: config.repo,
+          ...localIssue,
           issue: number,
           stateDir: join(stateRoot, String(number)),
-          checks: values.check ?? [],
-          pi,
           admit,
         }).pipe(Effect.provideService(GitHub, github));
         yield* host.drain();
@@ -181,6 +193,31 @@ const command = Effect.gen(function* () {
         );
         return state.status;
       }, Effect.mapError(localWatchIssueError)),
+      ...(values["auto-repair"]
+        ? {
+            repairIssue: Effect.fn("LocalWatch.repairIssue")(
+              function* (number: number, admit: boolean) {
+                const host = yield* openLocalIssue({
+                  ...localIssue,
+                  issue: number,
+                  admit,
+                  stateDir: join(stateRoot, String(number)),
+                  repair: { automatic: true, load: loadRepair },
+                }).pipe(Effect.provideService(GitHub, github));
+                yield* host.drain();
+                const { state } = yield* host.view();
+                yield* Effect.logInfo(
+                  `Issue #${number}: automatic repair ${state.status}${state.failure ? ` — ${state.failure}` : ""}`,
+                );
+              },
+              Effect.catchIf(
+                (error) => error instanceof LocalRunnerError && error.reason === "ineligible",
+                () => Effect.void,
+              ),
+              Effect.mapError(localWatchIssueError),
+            ),
+          }
+        : {}),
     });
     yield* interrupt.pipe(
       Effect.flatMap(() =>
@@ -196,7 +233,7 @@ const command = Effect.gen(function* () {
       Effect.forkScoped,
     );
     yield* Effect.logInfo(
-      `Watching ${config.repo.owner}/${config.repo.name}, label ${label}, every ${pollSeconds}s; state ${stateRoot}`,
+      `Watching ${config.repo.owner}/${config.repo.name}, label ${label}, every ${pollSeconds}s; state ${stateRoot}${values["auto-repair"] ? "; automatic CI repair on" : ""}`,
     );
     return yield* watcher.run;
   }
@@ -205,26 +242,11 @@ const command = Effect.gen(function* () {
       join(homedir(), ".local/state/caldero", config.repo.owner, config.repo.name, String(issue)),
   );
   const host = yield* openLocalIssue({
-    repo: config.repo,
+    ...localIssue,
     issue,
     stateDir,
     retry: values.retry ?? false,
-    ...(values.repair
-      ? {
-          repair: (number: number) =>
-            github
-              .readRepairTarget(number)
-              .pipe(
-                Effect.flatMap((target) =>
-                  readLocalRepairContext(config.repo, target).pipe(
-                    Effect.map((context) => ({ target, context })),
-                  ),
-                ),
-              ),
-        }
-      : {}),
-    checks: values.check ?? [],
-    pi,
+    ...(values.repair ? { repair: { load: loadRepair } } : {}),
   }).pipe(Effect.provideService(GitHub, github));
   yield* interrupt.pipe(
     Effect.flatMap(() =>
