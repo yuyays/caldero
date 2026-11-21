@@ -215,7 +215,7 @@ describe("Local durable runner", () => {
                                   target: {
                                     number,
                                     headRef: "caldero/7-v1",
-                                    headSha: "red-head",
+                                    headSha: phase === "spent" ? "new-red-head" : "red-head",
                                     baseRef: "main",
                                   },
                                   context: "Fix the red job",

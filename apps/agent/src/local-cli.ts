@@ -206,9 +206,7 @@ const command = Effect.gen(function* () {
                 }).pipe(Effect.provideService(GitHub, github));
                 yield* host.drain();
                 const { state } = yield* host.view();
-                yield* Effect.logInfo(
-                  `Issue #${number}: automatic repair ${state.status}${state.failure ? ` — ${state.failure}` : ""}`,
-                );
+                yield* Effect.logInfo(`Issue #${number}: automatic repair ${state.status}`);
               },
               Effect.catchIf(
                 (error) => error instanceof LocalRunnerError && error.reason === "ineligible",

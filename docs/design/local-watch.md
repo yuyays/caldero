@@ -28,12 +28,13 @@ If discovery fails, saved work can still resume, but idle sessions remain pendin
 until eligibility can be checked. Eligibility is a scan-time snapshot, not a lock
 on GitHub issue state.
 
-Settled receipts suppress repeated opening of terminal sessions. If the process
+By default, settled receipts suppress repeated opening of terminal sessions. If the process
 dies after publication but before recording settlement, reopening the issue's
 SQLite recovers its existing PR. Failed/cancelled sessions stay terminal; changing
 labels does not start another attempt. Legacy paused sessions are reported once;
-the watcher offers no automatic restart of paused or terminal sessions. Failed
-sessions can be retried explicitly with [the local retry command](local-retry.md),
+the watcher leaves paused sessions alone. With `--auto-repair`, published sessions
+can start one [CI repair](local-repair.md#automatic-repair-in-local-watch).
+Failed sessions can be retried explicitly with [the local retry command](local-retry.md),
 using the same issue directory; no settlement receipt needs removal.
 
 Discovery and transient issue failures log and retry on the next cycle. Permanent
