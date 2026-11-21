@@ -48,7 +48,9 @@ the watcher's settled issues. A new attempt requires an open issue with the
 watch label in the current scan. The published session, PR ownership, head
 and failing Actions job are checked before admission.
 
-Each scan checks eligible published sessions serially after normal issue work.
+The watcher scans eligible published sessions serially after normal issue work.
+It waits at least five minutes between repair scans. Issue discovery continues
+at its configured interval. A fresh watcher checks saved work on its first scan.
 A single completed failed Actions job can trigger repair while other checks are
 pending. Enabling the flag lets Caldero send a bounded log excerpt to Pi and
 spend model tokens without asking about each run.

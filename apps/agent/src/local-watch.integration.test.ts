@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber } from "effect";
+import { TestClock } from "effect/testing";
 import { makeFakeGitHub } from "./fake-github.ts";
 import { openLocalIssue } from "./local-runner.ts";
 import { LocalWatchIssueError, localWatchIssueError, openLocalWatcher } from "./local-watch.ts";
@@ -16,6 +17,40 @@ const directory = Effect.acquireRelease(
 );
 
 describe("Local issue watcher", () => {
+  it.effect("continues issue discovery between automatic CI repair scans", () =>
+    Effect.gen(function* () {
+      const stateRoot = yield* directory;
+      const firstScan = yield* Deferred.make<void>();
+      let discoverCalls = 0;
+      const repairs: number[] = [];
+      let stop = Effect.void;
+      const watcher = yield* openLocalWatcher({
+        repo,
+        stateRoot,
+        pollSeconds: 60,
+        discover: Effect.sync(() => {
+          discoverCalls++;
+          return [7];
+        }),
+        runIssue: () => Effect.succeed("published" as const),
+        repairIssue: Effect.fn("fixture.repairScan")(function* (issue: number) {
+          repairs.push(issue);
+          if (repairs.length === 1) yield* Deferred.succeed(firstScan, undefined);
+          else yield* stop;
+        }),
+      });
+      stop = watcher.stop;
+      const fiber = yield* watcher.run.pipe(Effect.forkChild);
+      yield* Deferred.await(firstScan);
+      yield* TestClock.adjust("299 seconds");
+      expect(discoverCalls).toBeGreaterThan(1);
+      expect(repairs).toEqual([7]);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(fiber);
+      expect(repairs).toEqual([7, 7]);
+    }),
+  );
+
   it.effect("keeps active statuses pending until a terminal result is reported", () =>
     Effect.gen(function* () {
       const stateRoot = yield* directory;

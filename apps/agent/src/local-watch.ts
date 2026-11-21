@@ -2,7 +2,7 @@ import { mkdir, open, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import type { Repo, Status } from "@caldero/domain";
 import { SessionFault } from "@caldero/contracts/inbox";
-import { Deferred, Effect, Result, Schema, type Scope } from "effect";
+import { Clock, Deferred, Effect, Result, Schema, type Scope } from "effect";
 import { holdLocalLock, LocalRunnerError } from "./local-runner.ts";
 import type { GitHubError } from "./ports.ts";
 import type { SessionHostError } from "./session-host.ts";
@@ -37,6 +37,7 @@ const settledStatuses: ReadonlySet<Status> = new Set([
   "rejected",
   "awaitingApproval",
 ]);
+const repairScanIntervalMs = 5 * 60 * 1000;
 
 /** Persist scheduling receipts before work starts. The issue SQLite owns execution and publication. */
 export const openLocalWatcher = Effect.fn("openLocalWatcher")(function* (options: {
@@ -120,6 +121,7 @@ export const openLocalWatcher = Effect.fn("openLocalWatcher")(function* (options
     state = next;
   });
   const run = Effect.gen(function* () {
+    let nextRepairScan = 0;
     while (!(yield* Deferred.isDone(stopping))) {
       const eligible = yield* options.discover.pipe(
         Effect.map((issues) => new Set(issues)),
@@ -157,7 +159,11 @@ export const openLocalWatcher = Effect.fn("openLocalWatcher")(function* (options
               : [...state.settled, issue],
         });
       }
-      if (options.repairIssue) {
+      if (
+        options.repairIssue &&
+        state.settled.length > 0 &&
+        (yield* Clock.currentTimeMillis) >= nextRepairScan
+      ) {
         for (const issue of state.settled) {
           if (yield* Deferred.isDone(stopping)) return;
           yield* Effect.scoped(
@@ -170,6 +176,7 @@ export const openLocalWatcher = Effect.fn("openLocalWatcher")(function* (options
             ),
           );
         }
+        nextRepairScan = (yield* Clock.currentTimeMillis) + repairScanIntervalMs;
       }
       yield* Deferred.await(stopping).pipe(
         Effect.timeoutOrElse({
